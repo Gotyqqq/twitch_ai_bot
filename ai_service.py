@@ -106,7 +106,7 @@ async def generate_response(
                 if len(answer) < config.MIN_RESPONSE_LENGTH:
                     logging.info(f"Ответ слишком короткий ({len(answer)} символов), запрашиваем расширение...")
                     contents.append(types.Content(role="model", parts=[types.Part.from_text(text=answer)]))
-                    contents.append(types.Content(role="user", parts=[types.Part.from_text(text="Расскажи подробнее, ответ должен быть развёрнутым (минимум 400 символов).")]))
+                    contents.append(types.Content(role="user", parts=[types.Part.from_text(text="Расскажи подробнее, ответ должен быть развёрнутым (максимум 400 символов).")]))
                     
                     response = await client.aio.models.generate_content(
                         model=config.MODEL_NAME,
