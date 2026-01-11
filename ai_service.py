@@ -4,7 +4,6 @@ import config
 from google import genai
 from google.genai import types
 
-# Создаём клиент Gemini
 client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 
@@ -18,15 +17,12 @@ def is_context_relevant(current_msg: str, context_messages: list[dict], bot_nick
 
     current_lower = current_msg.lower()
 
-    # Если явно упомянут бот - берём контекст
     if f"@{bot_nick.lower()}" in current_lower:
-        # Но проверяем, не сменилась ли тема
         for keyword in config.TOPIC_CHANGE_KEYWORDS:
             if keyword in current_lower:
-                return context_messages[-2:]  # Только 2 последних
-        return context_messages[-4:]  # Последние 4
+                return context_messages[-2:]
+        return context_messages[-4:]
 
-    # Извлекаем ключевые слова из текущего сообщения
     current_words = set(
         w for w in current_lower.split()
         if len(w) > 3 and w.isalpha()
@@ -35,14 +31,12 @@ def is_context_relevant(current_msg: str, context_messages: list[dict], bot_nick
     if not current_words:
         return []
 
-    # Проверяем пересечение с контекстом
     relevant = []
     for msg in context_messages[-4:]:
         msg_words = set(
             w for w in msg["content"].lower().split()
             if len(w) > 3 and w.isalpha()
         )
-        # Если есть общие слова - сообщение релевантно
         if current_words & msg_words:
             relevant.append(msg)
 
@@ -60,13 +54,11 @@ def build_contents(
     relevant_context = is_context_relevant(current_message, context_messages, bot_nick)
     contents = []
 
-    # Добавляем только релевантный контекст
     for msg in relevant_context:
         role = "model" if msg["is_bot"] else "user"
         text = msg["content"] if msg["is_bot"] else f"{msg['author']}: {msg['content']}"
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text)]))
 
-    # Добавляем текущее сообщение
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=current_message)]))
 
     return contents
@@ -90,8 +82,8 @@ async def generate_response(
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                temperature=0.85,
-                max_output_tokens=120,
+                temperature=0.9,
+                max_output_tokens=300,
                 top_p=0.95,
                 top_k=40,
             ),
