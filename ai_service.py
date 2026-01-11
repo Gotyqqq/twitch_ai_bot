@@ -1,6 +1,6 @@
-# ai_service.py
+ ai_service.py
 import logging
-import time
+import asyncio
 import config
 from google import genai
 from google.genai import types
@@ -52,14 +52,13 @@ def build_contents(
 ) -> list[types.Content]:
     """
     Строит список contents для Gemini API.
-    Системный промпт добавляется как первое сообщение пользователя.
+    Системный промпт добавляется как первое сообщение (для Gemma).
     """
     relevant_context = is_context_relevant(current_message, context_messages, bot_nick)
     contents = []
 
-    # <CHANGE> Добавляем системный промпт как первое сообщение (для моделей без system_instruction)
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=f"[Инструкции]: {system_prompt}")]))
-    contents.append(types.Content(role="model", parts=[types.Part.from_text(text="Понял, буду следовать этим инструкциям.")]))
+    contents.append(types.Content(role="model", parts=[types.Part.from_text(text="Окей, поняла! Буду отвечать кратко, до 350 символов.")]))
 
     for msg in relevant_context:
         role = "model" if msg["is_bot"] else "user"
@@ -78,22 +77,19 @@ async def generate_response(
     bot_nick: str
 ) -> str | None:
     """
-    Генерирует ответ с проверкой релевантности контекста.
+    Генерирует ответ с проверкой релевантности контекста и повторными попытками при ошибке 429.
     context_messages: список словарей с ключами author, content, is_bot
     """
-    # <CHANGE> Передаем system_prompt в build_contents
     contents = build_contents(system_prompt, context_messages, current_message, bot_nick)
 
-    # <CHANGE> Добавляем retry логику для ошибки 429
     for attempt in range(config.RETRY_MAX_ATTEMPTS):
         try:
             response = await client.aio.models.generate_content(
                 model=config.MODEL_NAME,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    # <CHANGE> Убрали system_instruction - не поддерживается Gemma
-                    temperature=0.95,
-                    max_output_tokens=600,
+                    temperature=0.9,
+                    max_output_tokens=350,  # Ограничено для ~350 символов
                     top_p=0.95,
                     top_k=40,
                 ),
@@ -102,40 +98,49 @@ async def generate_response(
             if response and response.text:
                 answer = response.text.strip()
                 
-                # <CHANGE> Проверка минимальной длины ответа
-                if len(answer) < config.MIN_RESPONSE_LENGTH:
-                    logging.info(f"Ответ слишком короткий ({len(answer)} символов), запрашиваем расширение...")
-                    contents.append(types.Content(role="model", parts=[types.Part.from_text(text=answer)]))
-                    contents.append(types.Content(role="user", parts=[types.Part.from_text(text="Расскажи подробнее, ответ должен быть развёрнутым (максимум 400 символов).")]))
-                    
-                    response = await client.aio.models.generate_content(
-                        model=config.MODEL_NAME,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            temperature=0.95,
-                            max_output_tokens=600,
-                            top_p=0.95,
-                            top_k=40,
-                        ),
+                if len(answer) > config.MAX_RESPONSE_LENGTH:
+                    # Обрезаем по последнему полному предложению
+                    truncated = answer[:config.MAX_RESPONSE_LENGTH]
+                    # Ищем последнюю точку, восклицательный или вопросительный знак
+                    last_punct = max(
+                        truncated.rfind('.'),
+                        truncated.rfind('!'),
+                        truncated.rfind('?')
                     )
-                    if response and response.text:
-                        answer = response.text.strip()
+                    if last_punct > config.MAX_RESPONSE_LENGTH // 2:
+                        answer = truncated[:last_punct + 1]
+                    else:
+                        # Если нет знака препинания, обрезаем по последнему пробелу
+                        last_space = truncated.rfind(' ')
+                        if last_space > 0:
+                            answer = truncated[:last_space]
+                        else:
+                            answer = truncated
+                    logging.info(f"Ответ обрезан до {len(answer)} символов")
                 
                 relevant_count = len(is_context_relevant(current_message, context_messages, bot_nick))
-                logging.info(f"Ответ ({len(answer)} символов, контекст: {relevant_count}): {answer}")
+                logging.info(f"Gemini ответ (контекст: {relevant_count} сообщений, {len(answer)} символов): {answer}")
                 return answer
             return None
 
         except Exception as e:
             error_str = str(e)
-            # <CHANGE> Обработка ошибки 429 (превышена квота)
+            
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                delay = config.RETRY_BASE_DELAY * (2 ** attempt)
-                logging.warning(f"Ошибка 429, попытка {attempt + 1}/{config.RETRY_MAX_ATTEMPTS}. Ждём {delay} сек...")
-                time.sleep(delay)
-                continue
-            logging.error(f"Ошибка Gemini API: {e}")
-            return None
+                if attempt < config.RETRY_MAX_ATTEMPTS - 1:
+                    delay = config.RETRY_BASE_DELAY * (2 ** attempt)
+                    logging.warning(
+                        f"Ошибка 429 (превышена квота). "
+                        f"Попытка {attempt + 1}/{config.RETRY_MAX_ATTEMPTS}. "
+                        f"Ожидание {delay} секунд..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logging.error(f"Ошибка 429 после {config.RETRY_MAX_ATTEMPTS} попыток.")
+                    return None
+            else:
+                logging.error(f"Ошибка Gemini API: {e}")
+                return None
     
-    logging.error("Все попытки исчерпаны")
     return None
