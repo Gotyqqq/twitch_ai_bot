@@ -11,7 +11,14 @@ TWITCH_CHANNELS = os.getenv("TWITCH_CHANNEL", "").split(',')
 
 # Google Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 MODEL_NAME = "gemini-1.5-flash"
+
+MIN_RESPONSE_LENGTH = 400
+
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY = 4  # секунды
+
 # Поведение бота
 PASSIVE_RESPONSE_COOLDOWN = 60
 CONTEXT_MESSAGE_LIMIT = 6
