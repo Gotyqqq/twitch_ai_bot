@@ -12,7 +12,7 @@ TWITCH_CHANNELS = os.getenv("TWITCH_CHANNEL", "").split(',')
 # Google Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODEL_NAME = "gemini-2.0-flash-001"
+MODEL_NAME = "gemma-3-27b"
 
 MIN_RESPONSE_LENGTH = 400
 
