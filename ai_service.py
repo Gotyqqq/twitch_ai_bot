@@ -82,8 +82,8 @@ async def generate_response(
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                temperature=0.9,
-                max_output_tokens=300,
+                temperature=0.95,
+                max_output_tokens=600,
                 top_p=0.95,
                 top_k=40,
             ),
