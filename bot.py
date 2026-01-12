@@ -7,6 +7,7 @@ import random
 from collections import deque, Counter
 import httpx
 from twitchio.ext import commands
+from twitchio.message import Message
 
 import config
 import database
@@ -171,6 +172,58 @@ class Bot(commands.Bot):
                 result.append(word)
         
         return " ".join(result)
+
+    def translate_layout(self, text: str) -> str:
+        """
+        Переводит текст с неправильной раскладки клавиатуры.
+        Определяет, какая раскладка используется, и переводит на правильную.
+        """
+        # Подсчитываем символы из разных раскладок
+        en_chars = sum(1 for c in text if c in config.EN_TO_RU_LAYOUT)
+        ru_chars = sum(1 for c in text if c in config.RU_TO_EN_LAYOUT)
+        
+        # Если символов мало, не переводим
+        if en_chars + ru_chars < 3:
+            return text
+        
+        # Определяем, какая раскладка преобладает
+        if en_chars > ru_chars * 2:
+            # Вероятно написано на английской вместо русской
+            result = []
+            for char in text:
+                if char in config.EN_TO_RU_LAYOUT:
+                    result.append(config.EN_TO_RU_LAYOUT[char])
+                else:
+                    result.append(char)
+            translated = ''.join(result)
+            
+            # Проверяем, получилось ли что-то осмысленное
+            # Если больше 50% русских букв после перевода - используем перевод
+            ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я')
+            if ru_letters > len(translated) * 0.4:
+                logging.info(f"   🔤 Исправлена раскладка: '{text}' -> '{translated}'")
+                return translated
+        
+        elif ru_chars > en_chars * 2:
+            # Вероятно написано на русской вместо английской
+            result = []
+            for char in text:
+                if char in config.RU_TO_EN_LAYOUT:
+                    result.append(config.RU_TO_EN_LAYOUT[char])
+                else:
+                    result.append(char)
+            translated = ''.join(result)
+            
+            # Проверяем, получилось ли что-то осмысленное
+            # Если больше 50% английских букв после перевода - используем перевод
+            en_letters = sum(1 for c in translated if 'a' <= c.lower() <= 'z')
+            if en_letters > len(translated) * 0.4:
+                logging.info(f"   🔤 Исправлена раскладка: '{text}' -> '{translated}'")
+                return translated
+        
+        # Если ничего не подошло, возвращаем оригинал
+        return text
+
 
     def clean_response(self, text: str, state: ChannelState) -> str:
         """Очистка ответа от Unicode эмодзи и артефактов."""
@@ -391,7 +444,6 @@ class Bot(commands.Bot):
         Добавляет случайную опечатку в текст.
         Возвращает (текст_с_опечаткой, исправление_или_None)
         """
-        # Защищаем URL и Twitch-эмодзи от опечаток
         url_pattern = r'https?://[^\s]+'
         urls = re.findall(url_pattern, text)
         
@@ -403,7 +455,15 @@ class Bot(commands.Bot):
             url_placeholders[placeholder] = url
             protected_text = protected_text.replace(url, placeholder)
         
-        # Защищаем Twitch-эмоджи от опечаток
+        discord_pattern = r':\w+:'
+        discord_emotes = re.findall(discord_pattern, protected_text)
+        discord_placeholders = {}
+        for i, emote in enumerate(discord_emotes):
+            placeholder = f"__DISCORD_{i}__"
+            discord_placeholders[placeholder] = emote
+            protected_text = protected_text.replace(emote, placeholder)
+        
+        # Защищаем Twitch-эмодзи от опечаток
         emote_placeholders = {}
         emote_counter = 0
         
@@ -432,8 +492,7 @@ class Bot(commands.Bot):
         original_word = None
         
         for i, word in enumerate(words):
-            # Пропускаем плейсхолдеры
-            if word.startswith('__URL_') or word.startswith('__EMOTE_'):
+            if word.startswith('__URL_') or word.startswith('__EMOTE_') or word.startswith('__DISCORD_'):
                 continue
                 
             word_lower = word.lower().rstrip('.,!?')
@@ -455,7 +514,11 @@ class Bot(commands.Bot):
             for placeholder, url in url_placeholders.items():
                 result_text = result_text.replace(placeholder, url)
             
-            # Восстанавливаем эмодзи
+            # Восстанавливаем Discord эмодзи
+            for placeholder, emote in discord_placeholders.items():
+                result_text = result_text.replace(placeholder, emote)
+            
+            # Восстанавливаем Twitch эмодзи
             for placeholder, emote in emote_placeholders.items():
                 result_text = result_text.replace(placeholder, emote)
             
@@ -466,44 +529,60 @@ class Bot(commands.Bot):
         
         # Если словарь не сработал, используем старый метод
         attempts = 0
-        max_attempts = len(words)
+        max_attempts = 10
         
         while attempts < max_attempts:
-            word_idx = random.randint(0, len(words) - 1)
-            word = words[word_idx]
+            words = protected_text.split()
+            if not words:
+                return text, None
             
-            # Пропускаем плейсхолдеры
-            if word.startswith('__URL_') or word.startswith('__EMOTE_'):
+            valid_words = [w for w in words if not (w.startswith('__URL_') or w.startswith('__EMOTE_') or w.startswith('__DISCORD_'))]
+            
+            if not valid_words:
+                return text, None
+            
+            word_to_modify = random.choice(valid_words)
+            word_index = words.index(word_to_modify)
+            
+            # Чистим слово от знаков препинания
+            clean_word = word_to_modify.rstrip('.,!?;:')
+            if len(clean_word) < 3:
                 attempts += 1
                 continue
             
-            # Пытаемся найти символ для замены
-            for i, char in enumerate(word):
-                if char.lower() in config.TYPO_MAP:
-                    typo = random.choice(config.TYPO_MAP[char.lower()])
-                    if char.isupper():
-                        typo = typo.upper()
-                    
-                    original_word = word
-                    words[word_idx] = word[:i] + typo + word[i+1:]
-                    result_text = ' '.join(words)
-                    
-                    # Восстанавливаем URL
-                    for placeholder, url in url_placeholders.items():
-                        result_text = result_text.replace(placeholder, url)
-                    
-                    # Восстанавливаем эмодзи
-                    for placeholder, emote in emote_placeholders.items():
-                        result_text = result_text.replace(placeholder, emote)
-                    
-                    if random.random() < config.TYPO_FIX_PROBABILITY:
-                        return result_text, f"*{original_word}"
-                    else:
-                        return result_text, None
+            # Выбираем случайную позицию в слове
+            pos = random.randint(1, len(clean_word) - 1)
+            char = clean_word[pos].lower()
+            
+            if char in config.TYPO_MAP:
+                typo_char = random.choice(config.TYPO_MAP[char])
+                typo_word = clean_word[:pos] + typo_char + clean_word[pos + 1:]
+                
+                # Сохраняем знаки препинания
+                if len(word_to_modify) > len(clean_word):
+                    typo_word += word_to_modify[len(clean_word):]
+                
+                original_word = word_to_modify
+                words[word_index] = typo_word
+                
+                result_text = ' '.join(words)
+                
+                for placeholder, url in url_placeholders.items():
+                    result_text = result_text.replace(placeholder, url)
+                
+                for placeholder, emote in discord_placeholders.items():
+                    result_text = result_text.replace(placeholder, emote)
+                
+                for placeholder, emote in emote_placeholders.items():
+                    result_text = result_text.replace(placeholder, emote)
+                
+                if random.random() < config.TYPO_FIX_PROBABILITY:
+                    return result_text, f"*{clean_word}"
+                else:
+                    return result_text, None
             
             attempts += 1
         
-        # Не удалось добавить опечатку - возвращаем оригинальный текст
         return text, None
     
     def extract_user_fact(self, username: str, message: str) -> str | None:
@@ -673,7 +752,7 @@ class Bot(commands.Bot):
         
         await asyncio.sleep(typing_delay)
 
-    async def event_message(self, message):
+    async def event_message(self, message: Message):
         """Обработка входящих сообщений."""
         if message.echo:
             return
@@ -686,7 +765,7 @@ class Bot(commands.Bot):
             return
 
         logging.info("─" * 80)
-        logging.info(f"📨 ВХОДЯЩЕЕ СООБЩЕНИЕ")
+        logging.info(f"📨 ВХОДЯЩЕЕ СООБЩЕНИЕ:")
         logging.info(f"   Канал: {channel_name}")
         logging.info(f"   Автор: {author}")
         logging.info(f"   Текст: {content}")
@@ -698,7 +777,13 @@ class Bot(commands.Bot):
             return
 
         original_content = message.content
-        content = self.smart_transliterate(original_content, state)
+        corrected_content = self.translate_layout(original_content)
+        if corrected_content != original_content:
+            logging.info(f"   🔤 Раскладка исправлена: '{original_content}' -> '{corrected_content}'")
+            content = corrected_content
+        else:
+            content = self.smart_transliterate(original_content, state)
+
 
         if self.is_toxic(content):
             logging.warning(f"[{channel_name}] Токсичное сообщение от {message.author.name} скрыто")
@@ -748,7 +833,7 @@ class Bot(commands.Bot):
             logging.info(f"✉️  ОТПРАВЛЕНО (без AI)")
             logging.info("─" * 80)
             return
-
+        
         # Проверка массовых реакций
         # Здесь мы будем использовать result_of_mass_reaction, т.к. handle_mass_reaction не может использовать await
         result_of_mass_reaction = self.handle_mass_reaction(state, message.channel)
