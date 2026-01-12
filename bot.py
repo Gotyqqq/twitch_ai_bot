@@ -336,8 +336,8 @@ class Bot(commands.Bot):
 
     def translate_layout(self, text: str, state: ChannelState) -> str:
         """
-        Переводит текст с неправильной раскладки клавиатуры.
-        НЕ трогает: смайлики, теги, ссылки, никнеймы.
+        Переводит текст с английской раскладки на русскую ТОЛЬКО для слов, написанных с неправильной раскладкой.
+        НЕ трогает: смайлики, теги, ссылки, никнеймы, уже русские слова.
         Использует pymorphy2 для валидации результата.
         """
         words = text.split()
@@ -374,17 +374,22 @@ class Bot(commands.Bot):
                 result_words.append(word)
                 continue
             
-            # 6. Подсчитываем символы из разных раскладок
-            en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
-            ru_chars = sum(1 for c in stripped_word if c in config.RU_TO_EN_LAYOUT)
-            
-            if en_chars + ru_chars < 3:
+            ru_letters = sum(1 for c in stripped_word if 'а' <= c.lower() <= 'я' or c.lower() == 'ё')
+            # Если в слове уже есть русские буквы (50%+), НЕ трогаем его
+            if ru_letters > len(stripped_word) * 0.5:
                 result_words.append(word)
                 continue
             
-            # Определяем, какая раскладка преобладает
-            if en_chars > ru_chars * 1.5:
-                # Написано на английской вместо русской
+            # 6. Подсчитываем символы из английской раскладки
+            en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
+            
+            if en_chars < 3:
+                result_words.append(word)
+                continue
+            
+            # Определяем, написано ли на английской раскладке вместо русской
+            if en_chars >= len(stripped_word) * 0.7:
+                # Написано на английской вместо русской - пробуем конвертировать
                 translated_chars = []
                 for char in stripped_word:
                     if char in config.EN_TO_RU_LAYOUT:
@@ -393,28 +398,12 @@ class Bot(commands.Bot):
                         translated_chars.append(char)
                 translated = ''.join(translated_chars)
                 
-                ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я' or c == 'ё')
-                if ru_letters > len(translated) * 0.5 and is_valid_russian_word(translated):
-                    logging.info(f"   🔤 Исправлена раскладка: '{stripped_word}' -> '{translated}' ✓")
+                # Проверяем, получилось ли настоящее русское слово
+                if is_valid_russian_word(translated):
+                    logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
                     result_words.append(translated + punctuation)
                 else:
-                    result_words.append(word)
-                    logging.debug(f"   ⏭️ Пропущена конвертация '{stripped_word}' -> '{translated}' (не русское слово)")
-            elif ru_chars > en_chars * 1.5:
-                # Написано на русской вместо английской
-                translated_chars = []
-                for char in stripped_word:
-                    if char in config.RU_TO_EN_LAYOUT:
-                        translated_chars.append(config.RU_TO_EN_LAYOUT[char])
-                    else:
-                        translated_chars.append(char)
-                translated = ''.join(translated_chars)
-                
-                en_letters = sum(1 for c in translated if 'a' <= c.lower() <= 'z')
-                if en_letters > len(translated) * 0.5:
-                    logging.info(f"   🔤 Исправлена раскладка: '{stripped_word}' -> '{translated}'")
-                    result_words.append(translated + punctuation)
-                else:
+                    # Не получилось русское слово - оставляем как есть
                     result_words.append(word)
             else:
                 result_words.append(word)
