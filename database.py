@@ -70,6 +70,26 @@ def init_db(channel_name: str):
             )
         """)
         
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS emote_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                emote TEXT NOT NULL,
+                usage_count INTEGER DEFAULT 1,
+                last_used DATETIME NOT NULL,
+                UNIQUE(emote)
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS popular_phrases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phrase TEXT NOT NULL,
+                usage_count INTEGER DEFAULT 1,
+                last_used DATETIME NOT NULL,
+                UNIQUE(phrase)
+            )
+        """)
+        
         conn.commit()
         print(f"[{channel_name}] База данных инициализирована")
 
@@ -110,7 +130,6 @@ def get_chat_phrases(channel_name: str, min_frequency: int = 3) -> list[str]:
     try:
         with sqlite3.connect(db_name) as conn:
             cursor = conn.cursor()
-            # Берем только сообщения пользователей (не бота)
             cursor.execute(
                 "SELECT content FROM messages WHERE is_bot = 0 ORDER BY timestamp DESC LIMIT 300"
             )
@@ -122,10 +141,9 @@ def get_chat_phrases(channel_name: str, min_frequency: int = 3) -> list[str]:
         phrases = []
         for (message,) in messages:
             words = message.lower().split()
-            # Извлекаем фразы из 2-3 слов
             for i in range(len(words) - 1):
                 two_word = f"{words[i]} {words[i+1]}"
-                if len(two_word) > 5:  # Минимальная длина фразы
+                if len(two_word) > 5:
                     phrases.append(two_word)
                 
                 if i < len(words) - 2:
@@ -133,17 +151,15 @@ def get_chat_phrases(channel_name: str, min_frequency: int = 3) -> list[str]:
                     if len(three_word) > 8:
                         phrases.append(three_word)
         
-        # Считаем частоту
         phrase_counts = Counter(phrases)
-        # Возвращаем только частые фразы
         return [phrase for phrase, count in phrase_counts.most_common(20) if count >= min_frequency]
     except sqlite3.Error as e:
         print(f"Ошибка БД {db_name}: {e}")
         return []
 
 
-def get_chat_trends(channel_name: str, known_emotes: list[str], top_n: int = 12) -> tuple[list[str], list[str]]:
-    """Увеличено top_n для большего разнообразия смайликов."""
+def get_chat_trends(channel_name: str, known_emotes: list[str], top_n: int = 15) -> tuple[list[str], list[str]]:
+    """Анализирует популярные слова и эмодзи. Увеличен top_n для большего разнообразия."""
     db_name = get_db_name(channel_name)
     try:
         with sqlite3.connect(db_name) as conn:
@@ -188,18 +204,15 @@ def count_messages_since_bot(channel_name: str) -> int:
     try:
         with sqlite3.connect(db_name) as conn:
             cursor = conn.cursor()
-            # Находим последнее сообщение бота
             cursor.execute(
                 "SELECT id FROM messages WHERE is_bot = 1 ORDER BY timestamp DESC LIMIT 1"
             )
             last_bot = cursor.fetchone()
             
             if not last_bot:
-                # Если бот еще не писал, считаем все сообщения
                 cursor.execute("SELECT COUNT(*) FROM messages WHERE is_bot = 0")
                 return cursor.fetchone()[0]
             
-            # Считаем сообщения пользователей после последнего сообщения бота
             cursor.execute(
                 "SELECT COUNT(*) FROM messages WHERE is_bot = 0 AND id > ?",
                 (last_bot[0],)
@@ -212,7 +225,7 @@ def count_messages_since_bot(channel_name: str) -> int:
 
 def save_user_fact(channel_name: str, username: str, fact: str):
     """Сохраняет факт о пользователе."""
-    if not fact or len(fact) < 10:  # Игнорируем слишком короткие факты
+    if not fact or len(fact) < 10:
         return
     
     db_name = get_db_name(channel_name)
@@ -225,14 +238,13 @@ def save_user_fact(channel_name: str, username: str, fact: str):
             )
             conn.commit()
             
-            # Ограничиваем количество фактов
             cursor.execute(
                 "SELECT COUNT(*) FROM user_facts WHERE username = ?",
                 (username.lower(),)
             )
             count = cursor.fetchone()[0]
             
-            if count > config.MAX_USER_FACTS // 10:  # Максимум 5 фактов на пользователя
+            if count > config.MAX_USER_FACTS // 10:
                 cursor.execute(
                     "DELETE FROM user_facts WHERE id IN "
                     "(SELECT id FROM user_facts WHERE username = ? ORDER BY timestamp ASC LIMIT 1)",
@@ -289,15 +301,12 @@ def get_last_bot_response_reactions(channel_name: str) -> int:
                 return 0
             
             bot_id, bot_time = last_bot
-            # Конвертируем строку в datetime, если необходимо
             if isinstance(bot_time, str):
                 bot_time = datetime.datetime.fromisoformat(bot_time)
             
-            # Вычисляем время окончания и конвертируем обратно в строку для SQL
             end_time = bot_time + datetime.timedelta(seconds=30)
             end_time_str = end_time.isoformat()
             
-            # Считаем сообщения пользователей в течение 30 секунд после сообщения бота
             cursor.execute(
                 "SELECT COUNT(*) FROM messages WHERE is_bot = 0 AND id > ? AND timestamp < ?",
                 (bot_id, end_time_str)
@@ -345,14 +354,12 @@ def update_user_relationship(channel_name: str, username: str, is_positive: bool
     with sqlite3.connect(db_name) as conn:
         cursor = conn.cursor()
         
-        # Проверяем существование таблицы
         cursor.execute("""
             SELECT name FROM sqlite_master 
             WHERE type='table' AND name='user_relationships'
         """)
         
         if not cursor.fetchone():
-            # Таблица не существует, создаем её
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_relationships (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -366,7 +373,6 @@ def update_user_relationship(channel_name: str, username: str, is_positive: bool
             """)
             conn.commit()
         
-        # Получаем текущую статистику
         cursor.execute(
             "SELECT positive_count, negative_count, total_messages FROM user_relationships WHERE username = ?",
             (username.lower(),)
@@ -388,7 +394,6 @@ def update_user_relationship(channel_name: str, username: str, is_positive: bool
                 (positive, negative, total, datetime.datetime.now(), username.lower())
             )
         else:
-            # Создаем новую запись
             cursor.execute(
                 """INSERT INTO user_relationships 
                    (username, positive_count, negative_count, total_messages, last_interaction)
@@ -398,7 +403,6 @@ def update_user_relationship(channel_name: str, username: str, is_positive: bool
         
         conn.commit()
         
-        # Обновляем уровень отношений
         update_relationship_level(channel_name, username)
 
 
@@ -419,7 +423,6 @@ def update_relationship_level(channel_name: str, username: str):
         
         positive, negative = result
         
-        # Определяем уровень
         if negative >= config.RELATIONSHIP_TOXIC_THRESHOLD:
             level = 'toxic'
         elif positive >= config.RELATIONSHIP_FAVORITE_THRESHOLD:
@@ -446,14 +449,12 @@ def get_user_relationship(channel_name: str, username: str) -> dict:
         with sqlite3.connect(db_name) as conn:
             cursor = conn.cursor()
             
-            # Проверяем существование таблицы
             cursor.execute("""
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND name='user_relationships'
             """)
             
             if not cursor.fetchone():
-                # Таблица не существует, создаем её
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS user_relationships (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -480,7 +481,7 @@ def get_user_relationship(channel_name: str, username: str) -> dict:
                     "positive_count": row[0],
                     "negative_count": row[1],
                     "total_messages": row[2],
-                    "relationship_level": row[3],
+                    "relationship_level": row[3] or "stranger",
                     "last_interaction": row[4]
                 }
             else:
@@ -518,7 +519,6 @@ def detect_mass_reaction(channel_name: str, recent_seconds: int = 10) -> str | N
             if len(messages) < config.MASS_REACTION_THRESHOLD:
                 return None
             
-            # Считаем смайлики
             emote_counts = Counter()
             for (message,) in messages:
                 words = message.split()
@@ -526,7 +526,6 @@ def detect_mass_reaction(channel_name: str, recent_seconds: int = 10) -> str | N
                     if word in config.MASS_REACTION_EMOTES:
                         emote_counts[word] += 1
             
-            # Проверяем, есть ли смайлик с 3+ упоминаниями
             for emote, count in emote_counts.most_common(1):
                 if count >= config.MASS_REACTION_THRESHOLD:
                     return emote
@@ -534,3 +533,107 @@ def detect_mass_reaction(channel_name: str, recent_seconds: int = 10) -> str | N
             return None
     except sqlite3.Error:
         return None
+
+
+
+def track_emote_usage(channel_name: str, emote: str):
+    """Трекает использование смайлика для статистики."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO emote_usage (emote, usage_count, last_used)
+                VALUES (?, 1, ?)
+                ON CONFLICT(emote) DO UPDATE SET
+                    usage_count = usage_count + 1,
+                    last_used = ?
+            """, (emote, datetime.datetime.now(), datetime.datetime.now()))
+            conn.commit()
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка трекинга смайлика {emote}: {e}")
+
+
+def get_popular_emotes(channel_name: str, hours: int = 24) -> list[dict]:
+    """Получает популярные смайлики за последние N часов."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(hours=hours)
+            cursor.execute("""
+                SELECT emote, usage_count FROM emote_usage
+                WHERE last_used > ?
+                ORDER BY usage_count DESC
+                LIMIT 25
+            """, (threshold,))
+            return [{"emote": row[0], "count": row[1]} for row in cursor.fetchall()]
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка получения популярных смайликов: {e}")
+        return []
+
+
+def track_phrase_usage(channel_name: str, phrase: str):
+    """Трекает использование фразы для статистики."""
+    if len(phrase) < 5 or len(phrase) > 100:
+        return
+    
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO popular_phrases (phrase, usage_count, last_used)
+                VALUES (?, 1, ?)
+                ON CONFLICT(phrase) DO UPDATE SET
+                    usage_count = usage_count + 1,
+                    last_used = ?
+            """, (phrase.lower(), datetime.datetime.now(), datetime.datetime.now()))
+            conn.commit()
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка трекинга фразы: {e}")
+
+
+def get_popular_phrases(channel_name: str, hours: int = 48) -> list[str]:
+    """Получает популярные фразы за последние N часов."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(hours=hours)
+            cursor.execute("""
+                SELECT phrase FROM popular_phrases
+                WHERE last_used > ? AND usage_count >= 3
+                ORDER BY usage_count DESC
+                LIMIT 30
+            """, (threshold,))
+            return [row[0] for row in cursor.fetchall()]
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка получения популярных фраз: {e}")
+        return []
+
+
+def get_user_message_stats(channel_name: str, username: str, days: int = 7) -> dict:
+    """Получает статистику сообщений пользователя за последние N дней."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(days=days)
+            
+            cursor.execute("""
+                SELECT COUNT(*), AVG(LENGTH(content))
+                FROM messages
+                WHERE author = ? AND is_bot = 0 AND timestamp > ?
+            """, (username, threshold))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    "message_count": result[0] or 0,
+                    "avg_message_length": round(result[1] or 0, 1)
+                }
+            return {"message_count": 0, "avg_message_length": 0}
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка получения статистики пользователя {username}: {e}")
+        return {"message_count": 0, "avg_message_length": 0}
