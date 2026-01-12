@@ -355,6 +355,18 @@ class Bot(commands.Bot):
         Добавляет случайную опечатку в текст.
         Возвращает (текст_с_опечаткой, исправление_или_None)
         """
+        # Находим все URL в тексте
+        url_pattern = r'https?://[^\s]+'
+        urls = re.findall(url_pattern, text)
+        
+        # Временно заменяем URL на плейсхолдеры
+        protected_text = text
+        url_placeholders = {}
+        for i, url in enumerate(urls):
+            placeholder = f"__URL_{i}__"
+            url_placeholders[placeholder] = url
+            protected_text = protected_text.replace(url, placeholder)
+        
         # Вероятность опечатки зависит от настроения
         typo_chance = config.TYPO_PROBABILITY
         if state.mood > 70:
@@ -362,12 +374,15 @@ class Bot(commands.Bot):
         elif state.mood < 40:
             typo_chance *= 0.5  # Меньше опечаток в плохом настроении
         
-        if random.random() > typo_chance or len(text) < 10:
-            return text, None
+        if random.random() > typo_chance or len(protected_text) < 10:
+            return text, None  # Возвращаем оригинальный текст с URL
         
         # Сначала пытаемся использовать словарь замен
-        words = text.split()
+        words = protected_text.split()
         for i, word in enumerate(words):
+            if word.startswith('__URL_'):
+                continue
+                
             word_lower = word.lower()
             if word_lower in config.TYPO_REPLACEMENTS:
                 if random.random() < 0.7:  # 70% шанс использовать словарь
@@ -380,6 +395,9 @@ class Bot(commands.Bot):
                     words[i] = typo_variant
                     result_text = ' '.join(words)
                     
+                    for placeholder, url in url_placeholders.items():
+                        result_text = result_text.replace(placeholder, url)
+                    
                     # Решаем, исправлять ли опечатку
                     if random.random() < config.TYPO_FIX_PROBABILITY:
                         return result_text, f"*{original_word}"
@@ -390,6 +408,12 @@ class Bot(commands.Bot):
         word_idx = random.randint(0, len(words) - 1)
         word = words[word_idx]
         
+        if word.startswith('__URL_'):
+            # Восстанавливаем URL и возвращаем без изменений
+            for placeholder, url in url_placeholders.items():
+                text = text.replace(placeholder, url)
+            return text, None
+        
         for i, char in enumerate(word):
             if char.lower() in config.TYPO_MAP:
                 typo_char = random.choice(config.TYPO_MAP[char.lower()])
@@ -398,11 +422,16 @@ class Bot(commands.Bot):
                 words[word_idx] = word[:i] + typo_char + word[i+1:]
                 result_text = ' '.join(words)
                 
+                for placeholder, url in url_placeholders.items():
+                    result_text = result_text.replace(placeholder, url)
+                
                 if random.random() < config.TYPO_FIX_PROBABILITY:
                     return result_text, f"*{word}"
                 else:
                     return result_text, None
         
+        for placeholder, url in url_placeholders.items():
+            text = text.replace(placeholder, url)
         return text, None
     
     def extract_user_fact(self, username: str, message: str) -> str | None:
@@ -606,7 +635,14 @@ class Bot(commands.Bot):
             database.save_user_fact(channel_name, author, user_fact)
             logging.debug(f"[{channel_name}] Сохранен факт: {user_fact}")
 
-        logging.info(f"[{channel_name}] {author}: {content} (сообщений: {state.message_count_since_response}, настроение: {state.mood:.1f}, энергия: {state.energy})")
+        user_rel = database.get_user_relationship(channel_name, author)
+        logging.info(
+            f"[{channel_name}] 📨 Получено сообщение от {author} (отношение: {user_rel['level']})\n"
+            f"  💬 Текст: {content}\n"
+            f"  📊 Статистика: сообщений с последнего ответа={state.message_count_since_response}, "
+            f"настроение={state.mood:.1f}, энергия={state.energy:.0f}\n"
+            f"  ⏰ Время с последнего ответа: {(now - state.last_response_time).total_seconds():.0f}с"
+        )
         database.save_message(channel_name, author, content, is_bot=False)
 
         await self.handle_commands(message)
@@ -635,7 +671,7 @@ class Bot(commands.Bot):
             
             if should_delay:
                 delay_time = random.uniform(config.DELAYED_RESPONSE_MIN, config.DELAYED_RESPONSE_MAX)
-                logging.info(f"[{channel_name}] Ответ отложен на {delay_time:.0f} секунд")
+                logging.info(f"[{channel_name}] ⏱️ Ответ отложен на {delay_time:.0f} секунд (имитация 'не видела сразу')")
                 await asyncio.sleep(delay_time)
             
             if state.is_busy and not is_mentioned:
@@ -645,14 +681,25 @@ class Bot(commands.Bot):
                 database.save_message(channel_name, self.nick, busy_response, is_bot=True)
                 state.last_response_time = now
                 state.messages_sent_count += 1
-                logging.info(f"[{channel_name}] Короткий ответ (занята): {busy_response}")
+                logging.info(f"[{channel_name}] 💼 РЕЖИМ ЗАНЯТОСТИ: отправлен короткий ответ '{busy_response}'")
                 return
             
-            logging.info(f"[{channel_name}] Решение: генерировать ответ (упоминание: {is_mentioned})")
+            logging.info(
+                f"[{channel_name}] ✅ РЕШЕНИЕ ОТВЕТИТЬ\n"
+                f"  🎯 Причина: {'прямое упоминание' if is_mentioned else 'случайный ответ'}\n"
+                f"  👤 Пользователь: {author}\n"
+                f"  📝 Сообщение: {content[:50]}{'...' if len(content) > 50 else ''}"
+            )
             
             activity = database.get_chat_activity(channel_name, minutes=1)
             is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
             should_short_reply = (is_fatigued or state.energy < 30) and random.random() < config.FATIGUE_SHORT_RESPONSE_CHANCE
+            
+            if is_fatigued or state.energy < 30:
+                logging.info(
+                    f"[{channel_name}] 😓 УСТАЛОСТЬ: активность={activity} msg/min, "
+                    f"энергия={state.energy:.0f}, короткий_ответ={should_short_reply}"
+                )
             
             has_question = '?' in content
             await self.simulate_dynamic_typing(len(content), is_mentioned, has_question)
@@ -685,16 +732,23 @@ class Bot(commands.Bot):
             )
 
             if response:
+                logging.debug(f"[{channel_name}] 🤖 AI ответ (исходный): {response}")
+                
                 cleaned = self.clean_response(response, state)
 
                 if self.is_repetitive(cleaned, state):
-                    logging.info(f"[{channel_name}] Ответ повторяется, пропускаем")
+                    logging.info(f"[{channel_name}] ⚠️ Ответ повторяется, пропускаем")
                     return
 
                 if cleaned and not self.is_toxic(cleaned):
                     final_response = self.add_interjection(cleaned)
                     
+                    logging.debug(f"[{channel_name}] 📝 Перед опечатками: {final_response}")
+                    
                     final_response, typo_fix = self.add_typo(final_response, state)
+                    
+                    if typo_fix:
+                        logging.debug(f"[{channel_name}] ✏️ Добавлена опечатка, будет исправление: {typo_fix}")
                     
                     final_response = self.add_emote_to_response(final_response, state)
                     
@@ -720,27 +774,57 @@ class Bot(commands.Bot):
                         await self.send_long_message(message.channel, final_response)
                         database.save_message(channel_name, self.nick, final_response, is_bot=True)
                     
+                    logging.info(
+                        f"[{channel_name}] ✉️ ОТПРАВЛЕНО СООБЩЕНИЕ\n"
+                        f"  💬 Текст: {final_response}\n"
+                        f"  📊 Статус после отправки: настроение={state.mood:.1f}, "
+                        f"энергия={state.energy:.0f}, отправлено_всего={state.messages_sent_count}"
+                    )
+
                     if typo_fix:
                         await asyncio.sleep(random.uniform(2, 5))
                         await message.channel.send(typo_fix)
                         database.save_message(channel_name, self.nick, typo_fix, is_bot=True)
-
-                    state.last_response_time = now
-                    state.recent_responses.append(final_response)
-                    state.message_count_since_response = 0
-                    state.messages_sent_count += 1
-                    
-                    database.update_user_relationship(channel_name, author, is_positive=True)
-                    
-                    if random.random() < config.BUSY_PROBABILITY:
-                        busy_duration = random.uniform(config.BUSY_MIN_DURATION, config.BUSY_MAX_DURATION)
-                        state.is_busy = True
-                        state.busy_until = now + datetime.timedelta(seconds=busy_duration)
-                        logging.info(f"[{channel_name}] Бот вошел в режим занятости на {busy_duration/60:.1f} минут")
+                        logging.info(f"[{channel_name}] ✏️ Отправлено исправление опечатки: {typo_fix}")
                 else:
-                    logging.warning(f"[{channel_name}] Ответ пустой или токсичный: '{response}'")
+                    logging.warning(f"[{channel_name}] ⛔ Ответ отклонен (токсичный или пустой): {cleaned}")
+            else:
+                logging.warning(f"[{channel_name}] ❌ AI не вернул ответ")
         else:
-            logging.debug(f"[{channel_name}] Решение: не отвечать")
+            logging.debug(
+                f"[{channel_name}] ⏭️ Решение НЕ отвечать: "
+                f"упоминание={is_mentioned}, вероятность={self.calculate_response_probability(state, author):.2%}"
+            )
+
+    # Вспомогательная функция для логирования вероятности ответа
+    def calculate_response_probability(self, state: ChannelState, author: str) -> float:
+        now = datetime.datetime.now()
+        time_since_response = (now - state.last_response_time).total_seconds()
+        activity = database.get_chat_activity(state.name, minutes=1)
+        is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
+        min_cooldown = config.MIN_RESPONSE_COOLDOWN * (config.FATIGUE_COOLDOWN_MULTIPLIER if is_fatigued else 1)
+        if time_since_response < min_cooldown or state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
+            return 0.0
+        if time_since_response > config.MAX_RESPONSE_COOLDOWN:
+            return 1.0
+        
+        base_probability = config.RESPONSE_PROBABILITY
+        relationship = database.get_user_relationship(state.name, author)
+        if relationship['level'] == 'favorite':
+            base_probability += config.RELATIONSHIP_FAVORITE_MODIFIER
+        elif relationship['level'] == 'friend':
+            base_probability += config.RELATIONSHIP_FRIEND_MODIFIER
+        elif relationship['level'] == 'acquaintance':
+            base_probability += config.RELATIONSHIP_ACQUAINTANCE_MODIFIER
+        elif relationship['level'] == 'toxic':
+            base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
+        
+        if state.energy < 30:
+            base_probability *= 0.5
+        elif state.energy > 80:
+            base_probability *= 1.2
+        
+        return max(0.0, min(1.0, base_probability))
 
     @commands.command(name='ping')
     async def ping_command(self, ctx: commands.Context):
