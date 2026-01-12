@@ -13,6 +13,7 @@ TWITCH_CHANNELS = os.getenv("TWITCH_CHANNEL", "").split(',')
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL_NAME = "gemma-3-27b-it"
+AI_MODEL = MODEL_NAME  # Alias for consistency
 
 # ====================================================================
 # ⚙️ ОСНОВНЫЕ ПАРАМЕТРЫ (МОЖНО МЕНЯТЬ)
@@ -208,6 +209,8 @@ FORBIDDEN_WORDS = [
 # Позитивные/негативные индикаторы для настроения
 POSITIVE_INDICATORS = ['lul', 'lol', 'kek', 'pog', 'nice', 'good', 'хорошо', 'круто', 'топ', 'класс', 'ахах', 'хах']
 NEGATIVE_INDICATORS = ['плохо', 'бред', 'отстой', 'sad', 'monkas', 'weird', 'zzz', 'boring', 'скучно', 'грустно']
+
+INTERJECTIONS = ['эм', 'хмм', 'типа', 'короче']
 
 INTERJECTIONS = ['ну', 'эм', 'хмм', 'типа', 'короче', 'кстати', 'вот', 'так']
 
