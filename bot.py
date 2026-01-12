@@ -4,7 +4,7 @@ import datetime
 import logging
 import re
 import random
-from collections import deque
+from collections import deque, Counter
 import httpx
 from twitchio.ext import commands
 
@@ -81,9 +81,16 @@ class ChannelState:
         self.chat_phrases: list[str] = []  # Частые фразы из чата
         
         self.mood = config.INITIAL_MOOD  # Настроение бота (20-100)
-        self.is_afk = False  # В режиме АФК?
-        self.afk_until = datetime.datetime.min  # До какого времени АФК
+        
+        self.is_busy = False  # В режиме занятости?
+        self.busy_until = datetime.datetime.min  # До какого времени занята
+        
         self.recent_topics: deque[str] = deque(maxlen=config.TOPIC_MEMORY_SIZE)  # Последние темы
+        
+        self.energy = config.ENERGY_DAY  # Текущая энергия (0-100)
+        self.messages_sent_count = 0  # Счетчик отправленных сообщений для усталости
+        self.pending_typo_fix = None  # Опечатка для исправления
+        self.recent_messages_for_mass_detection: deque[tuple] = deque(maxlen=10)  # Для определения массовых реакций
 
 
 class Bot(commands.Bot):
@@ -221,181 +228,300 @@ class Bot(commands.Bot):
                     return True
         return False
 
-    def add_typo(self, text: str) -> str:
-        """Добавляет случайную опечатку в текст."""
-        if random.random() > config.TYPO_PROBABILITY or len(text) < 10:
-            return text
+    async def simulate_dynamic_typing(self, message_length: int, is_mentioned: bool, has_question: bool = False):
+        """
+        Улучшенная имитация печати с переменной скоростью и паузами на размышление.
+        """
+        # Пауза на размышление перед началом
+        thinking_delay = random.uniform(config.THINKING_DELAY_MIN, config.THINKING_DELAY_MAX)
         
-        words = text.split()
-        if not words:
-            return text
+        if has_question:
+            thinking_delay += config.THINKING_DELAY_QUESTION
         
-        # Выбираем случайное слово
-        word_idx = random.randint(0, len(words) - 1)
-        word = words[word_idx]
+        if message_length > 100:
+            thinking_delay += config.THINKING_DELAY_LONG
         
-        # Ищем букву для замены
-        for i, char in enumerate(word):
-            if char.lower() in config.TYPO_MAP:
-                typo_char = random.choice(config.TYPO_MAP[char.lower()])
-                # Сохраняем регистр
-                if char.isupper():
-                    typo_char = typo_char.upper()
-                words[word_idx] = word[:i] + typo_char + word[i+1:]
-                break
+        if is_mentioned:
+            thinking_delay *= 0.7  # При упоминании думаем быстрее
         
-        return ' '.join(words)
-    
-    def add_interjection(self, text: str) -> str:
-        """Добавляет междометие в начало сообщения."""
-        if random.random() > config.INTERJECTION_PROBABILITY:
-            return text
+        await asyncio.sleep(thinking_delay)
         
-        interjection = random.choice(config.INTERJECTIONS)
+        # Расчет времени печати с переменной скоростью
+        words = message_length / 5  # Примерно 5 символов на слово
         
-        # Если сообщение короткое или уже начинается с междометия, не добавляем
-        if len(text) < 15 or text.lower().startswith(tuple(config.INTERJECTIONS)):
-            return text
+        # Скорость меняется: медленно → быстро → медленно
+        start_wpm = config.WPM_MIN
+        middle_wpm = config.WPM_FAST
+        end_wpm = config.WPM_NORMAL
         
-        # Решаем, добавлять запятую или нет
-        if random.random() < 0.5:
-            return f"{interjection}, {text}"
+        # Разбиваем печать на 3 части
+        part_words = words / 3
+        
+        time_part1 = (part_words / start_wpm) * 60
+        time_part2 = (part_words / middle_wpm) * 60
+        time_part3 = (part_words / end_wpm) * 60
+        
+        total_typing_time = time_part1 + time_part2 + time_part3
+        
+        # Имитируем "начал печатать → пауза → продолжил" для длинных сообщений
+        if message_length > 100 and random.random() < 0.3:
+            # Печатаем 40%
+            await asyncio.sleep(total_typing_time * 0.4)
+            # Пауза (передумал как сказать)
+            await asyncio.sleep(random.uniform(1, 3))
+            # Допечатываем остальное
+            await asyncio.sleep(total_typing_time * 0.6)
         else:
-            return f"{interjection} {text}"
+            # Обычная печать
+            await asyncio.sleep(total_typing_time)
     
     def update_mood(self, state: ChannelState, message: str, reactions_to_bot: int = 0):
-        """Обновляет настроение бота на основе сообщений."""
+        """Обновляет настроение бота с эмоциональной инерцией."""
         message_lower = message.lower()
+        
+        # Вычисляем целевое настроение
+        target_mood = state.mood
         
         # Проверяем позитивные индикаторы
         positive_count = sum(1 for word in config.POSITIVE_INDICATORS if word in message_lower)
         negative_count = sum(1 for word in config.NEGATIVE_INDICATORS if word in message_lower)
         
         if positive_count > negative_count:
-            state.mood += config.MOOD_INCREASE_POSITIVE
+            target_mood += config.MOOD_INCREASE_POSITIVE
         elif negative_count > positive_count:
-            state.mood -= config.MOOD_DECREASE_NEGATIVE
+            target_mood -= config.MOOD_DECREASE_NEGATIVE
         
         # Обновляем настроение на основе реакции на последнее сообщение бота
         if reactions_to_bot == 0:
-            state.mood -= config.MOOD_DECREASE_IGNORED
+            target_mood -= config.MOOD_DECREASE_IGNORED
         elif reactions_to_bot >= 2:
-            state.mood += config.MOOD_INCREASE_POSITIVE
+            target_mood += config.MOOD_INCREASE_POSITIVE
+        
+        # Применяем эмоциональную инерцию (плавный переход)
+        if target_mood < state.mood:
+            # Негативное изменение - медленное восстановление
+            inertia = config.MOOD_INERTIA_NEGATIVE
+        elif target_mood > state.mood:
+            # Позитивное изменение - быстрое улучшение
+            inertia = config.MOOD_INERTIA_POSITIVE
+        else:
+            inertia = config.MOOD_INERTIA_NORMAL
+        
+        # Плавное изменение настроения
+        state.mood = state.mood * inertia + target_mood * (1 - inertia)
         
         # Ограничиваем настроение
         state.mood = max(config.MOOD_MIN, min(config.MOOD_MAX, state.mood))
         
-        logging.debug(f"[{state.name}] Настроение обновлено: {state.mood}")
+        logging.debug(f"[{state.name}] Настроение обновлено: {state.mood:.1f}")
     
-    def get_mood_description(self, mood: int) -> str:
-        """Возвращает описание настроения для промпта."""
-        if mood >= 80:
-            return "отличное, веселая и энергичная"
-        elif mood >= 60:
-            return "хорошее, дружелюбная"
-        elif mood >= 40:
-            return "нейтральное, спокойная"
-        else:
-            return "не очень, немного грустная или уставшая"
-    
-    def get_time_of_day_mood(self) -> str:
-        """Возвращает описание состояния в зависимости от времени суток."""
+    def update_energy(self, state: ChannelState):
+        """Обновляет энергию бота на основе времени суток и активности."""
         hour = datetime.datetime.now().hour
         
-        if config.MORNING_START <= hour < config.EVENING_START:
-            return "бодрая, день в разгаре"
-        elif config.EVENING_START <= hour < config.NIGHT_START:
-            return "активная, вечер - лучшее время"
+        # Базовая энергия по времени суток
+        if 0 <= hour < 7:
+            base_energy = config.ENERGY_NIGHT
+        elif 7 <= hour < 10:
+            base_energy = config.ENERGY_MORNING
+        elif 10 <= hour < 15:
+            base_energy = config.ENERGY_DAY
+        elif 15 <= hour < 18:
+            base_energy = config.ENERGY_AFTERNOON
+        elif 18 <= hour < 23:
+            base_energy = config.ENERGY_EVENING
         else:
-            return "сонная, поздно уже"
+            base_energy = config.ENERGY_LATE
+        
+        # Усталость от сообщений
+        energy_drain = 0
+        if state.messages_sent_count > 60:
+            energy_drain = config.ENERGY_DRAIN_PER_60_MESSAGES
+        elif state.messages_sent_count > 30:
+            energy_drain = config.ENERGY_DRAIN_PER_30_MESSAGES
+        
+        state.energy = max(config.ENERGY_MIN, min(config.ENERGY_MAX, base_energy - energy_drain))
+        
+        logging.debug(f"[{state.name}] Энергия: {state.energy} (база: {base_energy}, усталость: -{energy_drain})")
     
-    def extract_user_fact(self, username: str, message: str) -> str | None:
-        """Пытается извлечь факт о пользователе из его сообщения."""
+    def restore_energy_after_silence(self, state: ChannelState):
+        """Восстанавливает энергию после длительного молчания."""
+        state.energy = min(config.ENERGY_MAX, state.energy + config.ENERGY_RESTORE_AFTER_SILENCE)
+        state.messages_sent_count = 0
+        logging.info(f"[{state.name}] Энергия восстановлена: {state.energy}")
+    
+    def add_typo(self, text: str, state: ChannelState) -> tuple[str, str | None]:
+        """
+        Добавляет случайную опечатку в текст.
+        Возвращает (текст_с_опечаткой, исправление_или_None)
+        """
+        # Вероятность опечатки зависит от настроения
+        typo_chance = config.TYPO_PROBABILITY
+        if state.mood > 70:
+            typo_chance *= 1.5  # Больше опечаток в хорошем настроении
+        elif state.mood < 40:
+            typo_chance *= 0.5  # Меньше опечаток в плохом настроении
+        
+        if random.random() > typo_chance or len(text) < 10:
+            return text, None
+        
+        # Сначала пытаемся использовать словарь замен
+        words = text.split()
+        for i, word in enumerate(words):
+            word_lower = word.lower()
+            if word_lower in config.TYPO_REPLACEMENTS:
+                if random.random() < 0.7:  # 70% шанс использовать словарь
+                    typo_variant = random.choice(config.TYPO_REPLACEMENTS[word_lower])
+                    # Сохраняем регистр первой буквы
+                    if word[0].isupper():
+                        typo_variant = typo_variant.capitalize()
+                    
+                    original_word = words[i]
+                    words[i] = typo_variant
+                    result_text = ' '.join(words)
+                    
+                    # Решаем, исправлять ли опечатку
+                    if random.random() < config.TYPO_FIX_PROBABILITY:
+                        return result_text, f"*{original_word}"
+                    else:
+                        return result_text, None
+        
+        # Если словарь не сработал, используем старый метод
+        word_idx = random.randint(0, len(words) - 1)
+        word = words[word_idx]
+        
+        for i, char in enumerate(word):
+            if char.lower() in config.TYPO_MAP:
+                typo_char = random.choice(config.TYPO_MAP[char.lower()])
+                if char.isupper():
+                    typo_char = typo_char.upper()
+                words[word_idx] = word[:i] + typo_char + word[i+1:]
+                result_text = ' '.join(words)
+                
+                if random.random() < config.TYPO_FIX_PROBABILITY:
+                    return result_text, f"*{word}"
+                else:
+                    return result_text, None
+        
+        return text, None
+    
+    def check_keyword_triggers(self, message: str, state: ChannelState) -> str | None:
+        """Проверяет keyword-триггеры и возвращает быструю реакцию без AI."""
         message_lower = message.lower()
         
-        # Паттерны для извлечения фактов
-        patterns = [
-            (r'я (играю|люблю|смотрю|слушаю|занимаюсь) (.+)', 2),
-            (r'у меня (.+)', 1),
-            (r'я (.+ лет|работаю|учусь)', 1),
-        ]
-        
-        for pattern, group in patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                fact = match.group(group).strip()
-                if len(fact) > 5 and len(fact) < 100:
-                    return f"{username} {match.group(1)} {fact}"
+        for keyword, responses in config.KEYWORD_TRIGGERS.items():
+            if keyword in message_lower:
+                # 50% шанс сработать
+                if random.random() < 0.5:
+                    return random.choice(responses)
         
         return None
-
-    async def event_ready(self):
-        logging.info(f'Бот {self.nick} запущен. Каналы: {", ".join(config.TWITCH_CHANNELS)}')
-        for channel_name in config.TWITCH_CHANNELS:
-            database.init_db(channel_name)
-        await self.fetch_and_prepare_emotes()
-
-        asyncio.create_task(self.update_trends_loop())
-        asyncio.create_task(self.check_silence_loop())
-        logging.info("Фоновые задачи запущены.")
-
-    async def fetch_and_prepare_emotes(self):
-        if not config.FETCH_7TV_EMOTES:
-            return
-        logging.info("Загрузка 7TV смайлов...")
-        try:
-            users = await self.fetch_users(names=config.TWITCH_CHANNELS)
-            if not users:
-                return
-            user_map = {user.name: user.id for user in users}
-
-            async with httpx.AsyncClient() as http_client:
-                for channel_name, state in self.channel_states.items():
-                    user_id = user_map.get(channel_name)
-                    if not user_id:
-                        continue
-                    try:
-                        response = await http_client.get(f"https://7tv.io/v3/users/twitch/{user_id}")
-                        if response.status_code == 200:
-                            data = response.json()
-                            emote_set = data.get('emote_set', {})
-                            if emote_set and 'emotes' in emote_set:
-                                state.third_party_emotes = [e['name'] for e in emote_set['emotes']]
-                                logging.info(f"[{channel_name}] Загружено {len(state.third_party_emotes)} 7TV смайлов")
-                    except Exception as e:
-                        logging.warning(f"[{channel_name}] Ошибка загрузки 7TV: {e}")
-
-                    state.all_known_emotes = state.standard_emotes + state.third_party_emotes
-                    state.popular_emotes = state.all_known_emotes[:20]
-        except Exception as e:
-            logging.error(f"Ошибка при получении смайлов: {e}")
-
-    async def send_long_message(self, channel, text: str):
-        """Отправляет длинное сообщение, разбивая на части по 450 символов."""
-        if len(text) <= config.MESSAGE_MAX_LENGTH:
-            await channel.send(text)
-            return
-
-        words = text.split()
-        current = ""
+    
+    async def handle_mass_reaction(self, state: ChannelState, channel) -> bool:
+        """
+        Проверяет массовую реакцию и реагирует на неё.
+        Возвращает True если сработала массовая реакция.
+        """
+        mass_emote = database.detect_mass_reaction(state.name, recent_seconds=10)
         
-        for word in words:
-            test_line = f"{current} {word}".strip() if current else word
-            
-            if len(test_line) > config.MESSAGE_MAX_LENGTH:
-                # Отправляем текущую часть
-                if current:
-                    await channel.send(current)
-                    await asyncio.sleep(1.8)  # Небольшая задержка между частями
-                current = word
+        if mass_emote and mass_emote not in state.used_emotes:
+            # Подхватываем волну
+            await channel.send(mass_emote)
+            database.save_message(state.name, self.nick, mass_emote, is_bot=True)
+            state.used_emotes.append(mass_emote)
+            state.last_response_time = datetime.datetime.now()
+            state.messages_sent_count += 1
+            logging.info(f"[{state.name}] Подхвачена массовая реакция: {mass_emote}")
+            return True
+        
+        return False
+    
+    def should_respond(self, state: ChannelState, is_mentioned: bool, author: str) -> bool:
+        """
+        Определяет, должен ли бот ответить на сообщение.
+        Учитывает кулдауны, активность чата, усталость, занятость, энергию и отношения.
+        """
+        # Проверяем режим занятости
+        if state.is_busy:
+            if datetime.datetime.now() < state.busy_until:
+                # В режиме занятости отвечаем редко
+                if random.random() > config.BUSY_RESPONSE_CHANCE:
+                    logging.debug(f"[{state.name}] Бот занят до {state.busy_until}")
+                    return False
             else:
-                current = test_line
+                # Выходим из режима занятости
+                state.is_busy = False
+                logging.info(f"[{state.name}] Бот вышел из режима занятости")
         
-        # Отправляем остаток
-        if current:
-            await channel.send(current)
+        # Всегда отвечаем на упоминание (если не сильно занята)
+        if is_mentioned:
+            if state.is_busy and random.random() < 0.7:
+                # Даже на упоминание не всегда отвечаем когда занята
+                return False
+            return True
+        
+        # Не отвечаем на свои сообщения
+        if author.lower() == self.nick.lower():
+            return False
+        
+        now = datetime.datetime.now()
+        time_since_response = (now - state.last_response_time).total_seconds()
+        
+        activity = database.get_chat_activity(state.name, minutes=1)
+        is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
+        
+        # Применяем множитель к кулдаунам при усталости
+        min_cooldown = config.MIN_RESPONSE_COOLDOWN
+        max_cooldown = config.MAX_RESPONSE_COOLDOWN
+        
+        if is_fatigued:
+            min_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
+            max_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
+            logging.debug(f"[{state.name}] Чат активный ({activity} сообщ/мин), усталость активна")
+        
+        # Проверяем минимальный кулдаун
+        if time_since_response < min_cooldown:
+            logging.debug(f"[{state.name}] Кулдаун: {time_since_response:.0f}с < {min_cooldown:.0f}с")
+            return False
+        
+        # Проверяем количество сообщений с последнего ответа бота
+        if state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
+            logging.debug(f"[{state.name}] Недостаточно сообщений: {state.message_count_since_response} < {config.MIN_MESSAGES_BEFORE_RESPONSE}")
+            return False
+        
+        # Проверяем максимальный кулдаун
+        if time_since_response > max_cooldown:
+            logging.info(f"[{state.name}] Превышен MAX кулдаун ({max_cooldown:.0f}с), бот должен ответить")
+            return True
+        
+        relationship = database.get_user_relationship(state.name, author)
+        
+        # Модифицируем вероятность в зависимости от отношений
+        base_probability = config.RESPONSE_PROBABILITY
+        
+        if relationship['level'] == 'favorite':
+            base_probability += config.RELATIONSHIP_FAVORITE_MODIFIER
+        elif relationship['level'] == 'friend':
+            base_probability += config.RELATIONSHIP_FRIEND_MODIFIER
+        elif relationship['level'] == 'acquaintance':
+            base_probability += config.RELATIONSHIP_ACQUAINTANCE_MODIFIER
+        elif relationship['level'] == 'toxic':
+            base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
+        
+        # Энергия влияет на вероятность
+        if state.energy < 30:
+            base_probability *= 0.5
+        elif state.energy > 80:
+            base_probability *= 1.2
+        
+        base_probability = max(0.0, min(1.0, base_probability))
+        
+        should_reply = random.random() < base_probability
+        logging.debug(f"[{state.name}] Проверка вероятности: {should_reply} (шанс {base_probability:.2f}, отношения: {relationship['level']})")
+        
+        return should_reply
 
-    def build_prompt(self, state: ChannelState, is_mentioned: bool = False) -> str:
+    def build_prompt(self, state: ChannelState, is_mentioned: bool) -> str:
         """Строит системный промпт с актуальными смайлами и контекстом."""
         limit = config.MAX_RESPONSE_LENGTH_MENTIONED if is_mentioned else config.MAX_RESPONSE_LENGTH
         emotes_str = ", ".join(state.popular_emotes[:15]) if state.popular_emotes else ", ".join(state.standard_emotes[:10])
@@ -499,6 +625,7 @@ class Bot(commands.Bot):
 
         if self.is_toxic(content):
             logging.warning(f"[{channel_name}] Токсичное сообщение от {message.author.name} скрыто")
+            database.update_user_relationship(channel_name, message.author.name, is_positive=False)
             return
 
         now = datetime.datetime.now()
@@ -506,6 +633,8 @@ class Bot(commands.Bot):
         author = message.author.name
 
         state.message_count_since_response += 1
+
+        self.update_energy(state)
 
         reactions = database.get_last_bot_response_reactions(channel_name)
         self.update_mood(state, content, reactions)
@@ -515,7 +644,7 @@ class Bot(commands.Bot):
             database.save_user_fact(channel_name, author, user_fact)
             logging.debug(f"[{channel_name}] Сохранен факт: {user_fact}")
 
-        logging.info(f"[{channel_name}] {author}: {content} (сообщений с последнего ответа: {state.message_count_since_response}, настроение: {state.mood})")
+        logging.info(f"[{channel_name}] {author}: {content} (сообщений: {state.message_count_since_response}, настроение: {state.mood:.1f}, энергия: {state.energy})")
         database.save_message(channel_name, author, content, is_bot=False)
 
         await self.handle_commands(message)
@@ -524,25 +653,60 @@ class Bot(commands.Bot):
 
         is_mentioned = f"@{self.nick.lower()}" in content.lower()
         
+        if await self.handle_mass_reaction(state, message.channel):
+            return
+        
+        quick_response = self.check_keyword_triggers(content, state)
+        if quick_response and not is_mentioned:
+            # Быстрая реакция без AI
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await message.channel.send(quick_response)
+            database.save_message(channel_name, self.nick, quick_response, is_bot=True)
+            state.last_response_time = now
+            state.messages_sent_count += 1
+            logging.info(f"[{channel_name}] Быстрая реакция (keyword): {quick_response}")
+            return
+        
         if self.should_respond(state, is_mentioned, author):
+            should_delay = (not is_mentioned and 
+                          random.random() < config.DELAYED_RESPONSE_PROBABILITY)
+            
+            if should_delay:
+                delay_time = random.uniform(config.DELAYED_RESPONSE_MIN, config.DELAYED_RESPONSE_MAX)
+                logging.info(f"[{channel_name}] Ответ отложен на {delay_time:.0f} секунд")
+                await asyncio.sleep(delay_time)
+            
+            if state.is_busy and not is_mentioned:
+                busy_response = random.choice(config.BUSY_SHORT_RESPONSES)
+                await asyncio.sleep(random.uniform(1, 2))
+                await message.channel.send(busy_response)
+                database.save_message(channel_name, self.nick, busy_response, is_bot=True)
+                state.last_response_time = now
+                state.messages_sent_count += 1
+                logging.info(f"[{channel_name}] Короткий ответ (занята): {busy_response}")
+                return
+            
             logging.info(f"[{channel_name}] Решение: генерировать ответ (упоминание: {is_mentioned})")
             
             activity = database.get_chat_activity(channel_name, minutes=1)
             is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
-            should_short_reply = is_fatigued and random.random() < config.FATIGUE_SHORT_RESPONSE_CHANCE
+            should_short_reply = (is_fatigued or state.energy < 30) and random.random() < config.FATIGUE_SHORT_RESPONSE_CHANCE
             
-            await self.simulate_typing_delay(len(content), is_mentioned)
+            has_question = '?' in content
+            await self.simulate_dynamic_typing(len(content), is_mentioned, has_question)
             
             context = database.get_last_messages(channel_name, limit=config.CONTEXT_MESSAGE_LIMIT)
             prompt = self.build_prompt(state, is_mentioned and not should_short_reply)
             
             if should_short_reply:
                 prompt += "\n\nОтветь МАКСИМАЛЬНО кратко, буквально 1-3 слова."
-                logging.info(f"[{channel_name}] Усталость: будет короткий ответ")
+                logging.info(f"[{channel_name}] Усталость/низкая энергия: будет короткий ответ")
 
             hot_topics = database.get_hot_topics(channel_name, time_minutes=10)
             user_facts = database.get_user_facts(channel_name, author)
             mood_state = self.get_mood_description(state.mood)
+            
+            relationship = database.get_user_relationship(channel_name, author)
 
             response = await ai_service.generate_response(
                 system_prompt=prompt,
@@ -553,7 +717,9 @@ class Bot(commands.Bot):
                 chat_phrases=state.chat_phrases,
                 hot_topics=hot_topics,
                 user_facts=user_facts if random.random() < config.RECALL_USER_FACT_PROBABILITY else None,
-                mood_state=mood_state
+                mood_state=mood_state,
+                energy_level=int(state.energy),
+                relationship_level=relationship['level']
             )
 
             if response:
@@ -565,7 +731,9 @@ class Bot(commands.Bot):
 
                 if cleaned and not self.is_toxic(cleaned):
                     final_response = self.add_interjection(cleaned)
-                    final_response = self.add_typo(final_response)
+                    
+                    final_response, typo_fix = self.add_typo(final_response, state)
+                    
                     final_response = self.add_emote_to_response(final_response, state)
                     
                     should_split = (random.random() < config.SPLIT_MESSAGE_PROBABILITY and 
@@ -589,16 +757,24 @@ class Bot(commands.Bot):
                     else:
                         await self.send_long_message(message.channel, final_response)
                         database.save_message(channel_name, self.nick, final_response, is_bot=True)
+                    
+                    if typo_fix:
+                        await asyncio.sleep(random.uniform(2, 5))
+                        await message.channel.send(typo_fix)
+                        database.save_message(channel_name, self.nick, typo_fix, is_bot=True)
 
                     state.last_response_time = now
                     state.recent_responses.append(final_response)
                     state.message_count_since_response = 0
+                    state.messages_sent_count += 1
                     
-                    if random.random() < config.AFK_PROBABILITY:
-                        afk_duration = random.uniform(config.AFK_MIN_DURATION, config.AFK_MAX_DURATION)
-                        state.is_afk = True
-                        state.afk_until = now + datetime.timedelta(seconds=afk_duration)
-                        logging.info(f"[{channel_name}] Бот ушел в АФК на {afk_duration/60:.1f} минут")
+                    database.update_user_relationship(channel_name, author, is_positive=True)
+                    
+                    if random.random() < config.BUSY_PROBABILITY:
+                        busy_duration = random.uniform(config.BUSY_MIN_DURATION, config.BUSY_MAX_DURATION)
+                        state.is_busy = True
+                        state.busy_until = now + datetime.timedelta(seconds=busy_duration)
+                        logging.info(f"[{channel_name}] Бот вошел в режим занятости на {busy_duration/60:.1f} минут")
                 else:
                     logging.warning(f"[{channel_name}] Ответ пустой или токсичный: '{response}'")
         else:
@@ -645,6 +821,9 @@ class Bot(commands.Bot):
                 time_since_msg = (now - state.last_message_time).total_seconds()
                 time_since_bot = (now - state.last_silence_break_time).total_seconds()
 
+                if time_since_msg > 600:  # 10 минут
+                    self.restore_energy_after_silence(state)
+
                 if time_since_msg > config.SILENCE_THRESHOLD and time_since_bot > config.BOT_SILENCE_COOLDOWN:
                     logging.info(f"[{channel_name}] Тишина в чате, генерация вопроса...")
 
@@ -657,7 +836,8 @@ class Bot(commands.Bot):
                         current_message="[система: в чате тишина, напиши что-нибудь интересное]",
                         bot_nick=self.nick,
                         is_mentioned=False,
-                        chat_phrases=state.chat_phrases
+                        chat_phrases=state.chat_phrases,
+                        energy_level=int(state.energy)
                     )
 
                     if response:
@@ -673,6 +853,7 @@ class Bot(commands.Bot):
                                 state.last_silence_break_time = now
                                 state.recent_responses.append(final)
                                 state.message_count_since_response = 0
+                                state.messages_sent_count += 1
 
 
 if __name__ == "__main__":
