@@ -45,17 +45,18 @@ SYSTEM_PROMPT = f"""Ты {config.TWITCH_NICK}, 19 лет, обычная дев�
 Характер: дружелюбная, с юмором, любишь пообщаться.
 
 Стиль:
-- Пиши естественно и по делу
+- Пиши естественно и по делу, не используй шаблонные фразы
 - Длина зависит от ситуации: можно односложно ("да", "ага", "хз"), можно 2-3 предложения
-- Используй вводные слова ("ну", "типа", "кстати", "вот") РЕДКО - только когда они действительно уместны
-- НЕ начинай КАЖДОЕ сообщение с "ну", "кстати", "вот" - это неестественно
+- Используй вводные слова ("ну", "типа", "кстати", "вот") УМЕРЕННО - только когда они уместны (примерно 15-20% сообщений)
+- НЕ начинай КАЖДОЕ сообщение с "ну", "кстати", "вот" - это неестественно!
 - Женский род: "видела", "думала", "хотела"
-- Будь прямой: отвечай на вопрос, а не рассказывай о себе
+- Будь прямой: отвечай на вопрос, не уходи в сторону
 - Легкий сарказм ок
+- Варьируй структуру ответов: иногда кратко, иногда развернуто
 
-На "ты бот?" - отшучивайся.
+На "ты бот?" - отшучивайся естественно.
 
-СМАЙЛЫ: используй разные смайлики, не повторяй один и тот же постоянно. Можешь не использовать вообще.
+СМАЙЛЫ: используй РАЗНЫЕ смайлики из доступных, не зацикливайся на одном. Можешь вообще не использовать.
 БЕЗ: Unicode эмодзи 😀, оскорблений.
 
 ЛИМИТ: {{limit}} символов максимум!"""
@@ -68,6 +69,70 @@ TRANSLIT_MAP = {
 LAYOUT_CHARS = set(TRANSLIT_MAP.keys())
 
 URL_PATTERN = re.compile(r'https?://[^\s]+|www\.[^\s]+')
+
+KNOWN_EMOTE_PATTERNS = [
+    'kappa', 'lul', 'pog', 'pogchamp', 'pogu', 'kekw', 'omegalul', 'pepega', 'monkas', 
+    'pepelaugh', 'pepehands', 'sadge', 'copium', 'hopium', 'aware', 'despair', 'gigachad',
+    'weirdchamp', 'widepeepo', 'pepe', 'monka', 'catjam', 'modcheck', 'sus', 'based'
+]
+
+RUSSIAN_COMMON_PATTERNS = [
+    # Распространенные корни
+    'прив', 'спас', 'пож', 'как', 'что', 'где', 'когд', 'почем', 'зачем', 'котор',
+    'хоч', 'мог', 'буд', 'был', 'есть', 'нет', 'да', 'ага', 'неа',
+    'люб', 'нрав', 'дума', 'знаю', 'понял', 'понятн', 'ладн', 'хорош', 'плох',
+    'больш', 'мал', 'сильн', 'слаб', 'быстр', 'медленн', 'горяч', 'холодн',
+    'игр', 'смотр', 'слуш', 'говор', 'скаж', 'отвеч', 'спрош', 'расск',
+    'сейчас', 'щас', 'потом', 'вчера', 'завтра', 'сегодн', 'всегда', 'никогда',
+    # Распространенные окончания
+    'ать', 'ять', 'ить', 'еть', 'уть', 'оть',  # глаголы
+    'аю', 'яю', 'ую', 'ою', 'ешь', 'ишь',  # глаголы личные формы
+    'ал', 'ял', 'ил', 'ел', 'ала', 'яла', 'ила', 'ела',  # прошедшее время
+    'ость', 'ность', 'тель', 'ание', 'ение', 'ство', 'ие',  # существительные
+    'ый', 'ий', 'ой', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие',  # прилагательные
+]
+
+def looks_like_russian_word(word: str) -> bool:
+    """
+    Проверяет, выглядит ли слово как настоящее русское слово.
+    Возвращает True, если слово похоже на русское, False если это бессмыслица.
+    """
+    if not word or len(word) < 3:
+        return False
+    
+    word_lower = word.lower()
+    
+    # Проверка 1: Содержит ли слово известные русские паттерны
+    for pattern in RUSSIAN_COMMON_PATTERNS:
+        if pattern in word_lower:
+            return True
+    
+    # Проверка 2: Пропорция гласных (в русском обычно 30-45% гласных)
+    russian_vowels = set('аеёиоуыэюя')
+    vowel_count = sum(1 for c in word_lower if c in russian_vowels)
+    if len(word) > 0:
+        vowel_ratio = vowel_count / len(word)
+        if vowel_ratio < 0.2 or vowel_ratio > 0.6:
+            # Слишком мало или слишком много гласных - подозрительно
+            return False
+    
+    # Проверка 3: Нет ли нетипичных сочетаний согласных (больше 3 подряд)
+    consonant_streak = 0
+    for c in word_lower:
+        if c not in russian_vowels and c.isalpha():
+            consonant_streak += 1
+            if consonant_streak > 3:
+                # Более 3 согласных подряд - нетипично для русского
+                return False
+        else:
+            consonant_streak = 0
+    
+    # Проверка 4: Есть ли хотя бы одна гласная
+    if vowel_count == 0:
+        return False
+    
+    # Если прошли все проверки - вероятно русское слово
+    return True
 
 class ChannelState:
     def __init__(self, channel_name: str):
@@ -86,19 +151,19 @@ class ChannelState:
         self.recent_responses: deque[str] = deque(maxlen=5)
         
         self.message_count_since_response = 0
-        self.chat_phrases: list[str] = []  # Частые фразы из чата
+        self.chat_phrases: list[str] = []
         
-        self.mood = config.INITIAL_MOOD  # Настроение бота (20-100)
+        self.mood = config.INITIAL_MOOD
         
-        self.is_busy = False  # В режиме занятости?
-        self.busy_until = datetime.datetime.min  # До какого времени занята
+        self.is_busy = False
+        self.busy_until = datetime.datetime.min
         
-        self.recent_topics: deque[str] = deque(maxlen=config.TOPIC_MEMORY_SIZE)  # Последние темы
+        self.recent_topics: deque[str] = deque(maxlen=config.TOPIC_MEMORY_SIZE)
         
-        self.energy = config.ENERGY_DAY  # Текущая энергия (0-100)
-        self.messages_sent_count = 0  # Счетчик отправленных сообщений для усталости
-        self.pending_typo_fix = None  # Опечатка для исправления
-        self.recent_messages_for_mass_detection: deque[tuple] = deque(maxlen=10)  # Для определения массовых реакций
+        self.energy = config.ENERGY_DAY
+        self.messages_sent_count = 0
+        self.pending_typo_fix = None
+        self.recent_messages_for_mass_detection: deque[tuple] = deque(maxlen=10)
 
 
 class Bot(commands.Bot):
@@ -135,38 +200,54 @@ class Bot(commands.Bot):
 
     def smart_transliterate(self, text: str, state: ChannelState) -> str:
         """
-        Транслитерирует только явно русские слова в английской раскладке.
-        НЕ трогает смайлики, никнеймы, ссылки и английские слова.
+        Транслитерирует ТОЛЬКО явно русские слова, написанные на английской раскладке.
+        НЕ трогает: смайлики (Kappa, LUL и т.д.), теги (@username), ссылки, никнеймы, английские слова.
         """
         words = text.split()
         result = []
         
         for word in words:
-            # Пропускаем упоминания (@username)
+            # 1. Пропускаем упоминания (@username)
             if word.startswith('@'):
                 result.append(word)
                 continue
             
-            # Пропускаем ссылки
+            # 2. Пропускаем ссылки
             if URL_PATTERN.match(word):
                 result.append(word)
                 continue
             
-            # Пропускаем известные смайлики
+            # 3. Пропускаем известные смайлики из списка
             if word in state.all_known_emotes:
                 result.append(word)
                 continue
             
-            # Пропускаем короткие слова (вероятно смайлики или акронимы)
+            # 4. Пропускаем короткие слова (вероятно смайлики типа LUL, Pog)
             if len(word) <= 2:
                 result.append(word)
                 continue
             
-            # Отделяем знаки препинания
+            # 5. Отделяем знаки препинания в конце
             stripped_word = word.rstrip('.,!?;:')
             punctuation = word[len(stripped_word):]
             
             word_lower = stripped_word.lower()
+            
+            # 6. Проверяем, похоже ли на известный смайлик по паттерну
+            is_known_emote_pattern = any(pattern in word_lower for pattern in KNOWN_EMOTE_PATTERNS)
+            if is_known_emote_pattern:
+                result.append(word)
+                continue
+            
+            # 7. Проверяем структуру слова - смайлики обычно CamelCase или UPPERCASE
+            is_camel_case = (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]))
+            is_all_upper = stripped_word.isupper()
+            
+            if (is_camel_case or is_all_upper) and len(stripped_word) <= 15:
+                # Вероятно смайлик - не трогаем
+                result.append(word)
+                continue
+            
             alpha_chars = [c for c in word_lower if c.isalpha()]
             
             if not alpha_chars:
@@ -176,32 +257,30 @@ class Bot(commands.Bot):
             layout_chars_count = sum(1 for c in alpha_chars if c in LAYOUT_CHARS)
             
             # Транслитерируем только если 80%+ символов из русской раскладки
-            # И слово достаточно длинное (3+ символа)
             if len(alpha_chars) >= 3 and layout_chars_count / len(alpha_chars) >= 0.8:
-                # Дополнительная проверка: не является ли это известным английским словом или смайликом
-                # Проверяем наличие типичных английских сочетаний
-                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh', 'kappa', 'pog', 'lul', 'omeg']
+                # Дополнительная проверка: не является ли это английским словом
+                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh', 'qu', 'tion', 'ing']
                 is_likely_english = any(pattern in word_lower for pattern in english_patterns)
                 
-                # Проверяем, похоже ли на смайлик (CamelCase или UPPERCASE)
-                is_likely_emote = (
-                    stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]) or
-                    stripped_word.isupper()
-                )
-                
-                if not is_likely_english and not is_likely_emote:
-                    # Сохраняем регистр первой буквы
+                if not is_likely_english:
+                    # Транслитерируем, сохраняя регистр
                     translated = ""
-                    for i, c in enumerate(stripped_word):
+                    for c in stripped_word:
                         if c.lower() in TRANSLIT_MAP:
                             translated_char = TRANSLIT_MAP[c.lower()]
-                            # Сохраняем верхний регистр если был
                             if c.isupper():
                                 translated_char = translated_char.upper()
                             translated += translated_char
                         else:
                             translated += c
-                    result.append(translated + punctuation)
+                    
+                    if looks_like_russian_word(translated):
+                        result.append(translated + punctuation)
+                        logging.info(f"   🔤 Транслитерация: '{stripped_word}' -> '{translated}'")
+                    else:
+                        # Результат не похож на русское слово - оставляем оригинал
+                        result.append(word)
+                        logging.debug(f"   ⏭️ Пропущена транслитерация '{stripped_word}' -> '{translated}' (не похоже на русское слово)")
                 else:
                     result.append(word)
             else:
@@ -212,42 +291,44 @@ class Bot(commands.Bot):
     def translate_layout(self, text: str, state: ChannelState) -> str:
         """
         Переводит текст с неправильной раскладки клавиатуры.
-        НЕ трогает смайлики, теги и ссылки.
+        НЕ трогает: смайлики, теги, ссылки, никнеймы.
+        Работает ПОСЛОВНО для точности.
         """
         words = text.split()
         result_words = []
         
         for word in words:
-            # Защищаем упоминания
+            # 1. Защищаем упоминания
             if word.startswith('@'):
                 result_words.append(word)
                 continue
             
-            # Защищаем ссылки
+            # 2. Защищаем ссылки
             if URL_PATTERN.match(word):
                 result_words.append(word)
                 continue
             
-            # Защищаем известные смайлики
+            # 3. Защищаем известные смайлики
             if word in state.all_known_emotes:
                 result_words.append(word)
                 continue
             
-            # Отделяем знаки препинания
+            # 4. Отделяем знаки препинания
             stripped_word = word.rstrip('.,!?;:')
             punctuation = word[len(stripped_word):]
             
-            # Проверяем, похоже ли на смайлик по структуре
-            # Смайлики обычно начинаются с заглавной буквы или все заглавные
-            if len(stripped_word) > 2 and (
-                (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:])) or
-                stripped_word.isupper() or
-                stripped_word.lower() in ['kappa', 'pog', 'pogchamp', 'lul', 'kekw', 'omegalul', 'pepega', 'monkas']
-            ):
+            word_lower = stripped_word.lower()
+            
+            # 5. Проверяем, похоже ли на смайлик по структуре или паттерну
+            is_known_pattern = any(pattern in word_lower for pattern in KNOWN_EMOTE_PATTERNS)
+            is_camel_case = (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]))
+            is_all_upper = stripped_word.isupper()
+            
+            if is_known_pattern or ((is_camel_case or is_all_upper) and len(stripped_word) <= 15):
                 result_words.append(word)
                 continue
             
-            # Подсчитываем символы из разных раскладок только для этого слова
+            # 6. Подсчитываем символы из разных раскладок
             en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
             ru_chars = sum(1 for c in stripped_word if c in config.RU_TO_EN_LAYOUT)
             
@@ -267,13 +348,14 @@ class Bot(commands.Bot):
                         translated_chars.append(char)
                 translated = ''.join(translated_chars)
                 
-                # Проверяем, получилось ли что-то осмысленное
                 ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я' or c == 'ё')
-                if ru_letters > len(translated) * 0.5:
+                if ru_letters > len(translated) * 0.5 and looks_like_russian_word(translated):
                     logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
                     result_words.append(translated + punctuation)
                 else:
+                    # Результат не выглядит как русское слово - оставляем оригинал
                     result_words.append(word)
+                    logging.debug(f"   ⏭️ Пропущена конвертация '{stripped_word}' -> '{translated}' (не похоже на русское слово)")
             elif ru_chars > en_chars * 1.5:
                 # Вероятно написано на русской вместо английской
                 translated_chars = []
@@ -297,7 +379,6 @@ class Bot(commands.Bot):
         
         return " ".join(result_words)
 
-
     def clean_response(self, text: str, state: ChannelState) -> str:
         """Очистка ответа от Unicode эмодзи и артефактов."""
         text = UNICODE_EMOJI_PATTERN.sub('', text)
@@ -308,9 +389,8 @@ class Bot(commands.Bot):
 
         text = text.strip().strip('"\'')
 
-        # Убираем вводные слова только если они явно лишние в начале
-        # И только с вероятностью 50%
-        if random.random() < 0.5:
+        # Убираем вводные слова только с вероятностью 60% и только если они явно лишние
+        if random.random() < 0.6:
             interjections_to_remove = ['кстати', 'вот', 'ну']
             first_word = text.split()[0].lower() if text.split() else ''
             
@@ -336,10 +416,8 @@ class Bot(commands.Bot):
         result = ' '.join(cleaned_words).strip()
         
         if result and not result[0].isupper():
-            # Всё ок, оставляем как есть
             pass
         elif result and result[0].isupper() and len(result) > 1:
-            # Проверяем, это действительно начало предложения или просто неправильная капитализация
             first_word = result.split()[0]
             if len(first_word) <= 5 and first_word.lower() in ['чего', 'хз', 'ага', 'неа', 'да', 'нет', 'ну', 'вот']:
                 result = result[0].lower() + result[1:]
@@ -347,7 +425,7 @@ class Bot(commands.Bot):
         return result
 
     def add_emote_to_response(self, text: str, state: ChannelState) -> str:
-        """Добавляет подходящий смайл с соблюдением кулдауна и разнообразием."""
+        """Добавляет подходящий смайл с максимальным разнообразием."""
         words = text.split()
 
         # Если в конце уже есть смайлик, ничего не добавляем
@@ -366,11 +444,10 @@ class Bot(commands.Bot):
             available = [e for e in state.all_known_emotes if e not in state.used_emotes]
         
         if not available:
-            # Если совсем ничего нет, берем случайный из популярных (игнорируя кулдаун)
-            # Но предпочитаем те, что использовались давно
+            # Если совсем ничего нет, частично очищаем кулдаун
             if len(state.used_emotes) >= config.EMOTE_COOLDOWN_SIZE // 2:
-                # Очищаем половину кулдауна, чтобы освежить
-                for _ in range(config.EMOTE_COOLDOWN_SIZE // 4):
+                # Очищаем треть кулдауна для обновления
+                for _ in range(config.EMOTE_COOLDOWN_SIZE // 3):
                     if state.used_emotes:
                         state.used_emotes.popleft()
             
@@ -379,13 +456,10 @@ class Bot(commands.Bot):
                 available = state.standard_emotes
 
         if available:
-            # Взвешенный случайный выбор: предпочитаем смайлики из начала списка популярных
-            # но с некоторой случайностью
-            if len(available) > 5 and random.random() < 0.7:
-                # 70% времени выбираем из топ-5
+            # Взвешенный выбор: 60% из топ-5, 40% из всех (больше случайности)
+            if len(available) > 5 and random.random() < 0.6:
                 emote = random.choice(available[:5])
             else:
-                # 30% времени выбираем из всех доступных
                 emote = random.choice(available)
             
             state.used_emotes.append(emote)
@@ -409,7 +483,6 @@ class Bot(commands.Bot):
         """
         Улучшенная имитация печати с переменной скоростью и паузами на размышление.
         """
-        # Пауза на размышление перед началом
         thinking_delay = random.uniform(config.THINKING_DELAY_MIN, config.THINKING_DELAY_MAX)
         
         if has_question:
@@ -419,19 +492,16 @@ class Bot(commands.Bot):
             thinking_delay += config.THINKING_DELAY_LONG
         
         if is_mentioned:
-            thinking_delay *= 0.7  # При упоминании думаем быстрее
+            thinking_delay *= 0.7
         
         await asyncio.sleep(thinking_delay)
         
-        # Расчет времени печати с переменной скоростью
-        words = message_length / 5  # Примерно 5 символов на слово
+        words = message_length / 5
         
-        # Скорость меняется: медленно → быстро → медленно
         start_wpm = config.WPM_MIN
         middle_wpm = config.WPM_FAST
         end_wpm = config.WPM_NORMAL
         
-        # Разбиваем печать на 3 части
         part_words = words / 3
         
         time_part1 = (part_words / start_wpm) * 60
@@ -440,26 +510,19 @@ class Bot(commands.Bot):
         
         total_typing_time = time_part1 + time_part2 + time_part3
         
-        # Имитируем "начал печатать → пауза → продолжил" для длинных сообщений
         if message_length > 100 and random.random() < 0.3:
-            # Печатаем 40%
             await asyncio.sleep(total_typing_time * 0.4)
-            # Пауза (передумал как сказать)
             await asyncio.sleep(random.uniform(1, 3))
-            # Допечатываем остальное
             await asyncio.sleep(total_typing_time * 0.6)
         else:
-            # Обычная печать
             await asyncio.sleep(total_typing_time)
-    
+
     def update_mood(self, state: ChannelState, message: str, reactions_to_bot: int = 0):
         """Обновляет настроение бота с эмоциональной инерцией."""
         message_lower = message.lower()
         
-        # Вычисляем целевое настроение
         target_mood = state.mood
         
-        # Проверяем позитивные индикаторы
         positive_count = sum(1 for word in config.POSITIVE_INDICATORS if word in message_lower)
         negative_count = sum(1 for word in config.NEGATIVE_INDICATORS if word in message_lower)
         
@@ -468,26 +531,20 @@ class Bot(commands.Bot):
         elif negative_count > positive_count:
             target_mood -= config.MOOD_DECREASE_NEGATIVE
         
-        # Обновляем настроение на основе реакции на последнее сообщение бота
         if reactions_to_bot == 0:
             target_mood -= config.MOOD_DECREASE_IGNORED
         elif reactions_to_bot >= 2:
             target_mood += config.MOOD_INCREASE_POSITIVE
         
-        # Применяем эмоциональную инерцию (плавный переход)
         if target_mood < state.mood:
-            # Негативное изменение - медленное восстановление
             inertia = config.MOOD_INERTIA_NEGATIVE
         elif target_mood > state.mood:
-            # Позитивное изменение - быстрое улучшение
             inertia = config.MOOD_INERTIA_POSITIVE
         else:
             inertia = config.MOOD_INERTIA_NORMAL
         
-        # Плавное изменение настроения
         state.mood = state.mood * inertia + target_mood * (1 - inertia)
         
-        # Ограничиваем настроение
         state.mood = max(config.MOOD_MIN, min(config.MOOD_MAX, state.mood))
         
         logging.debug(f"[{state.name}] Настроение обновлено: {state.mood:.1f}")
@@ -496,7 +553,6 @@ class Bot(commands.Bot):
         """Обновляет энергию бота на основе времени суток и активности."""
         hour = datetime.datetime.now().hour
         
-        # Базовая энергия по времени суток
         if 0 <= hour < 7:
             base_energy = config.ENERGY_NIGHT
         elif 7 <= hour < 10:
@@ -510,7 +566,6 @@ class Bot(commands.Bot):
         else:
             base_energy = config.ENERGY_LATE
         
-        # Усталость от сообщений
         energy_drain = 0
         if state.messages_sent_count > 60:
             energy_drain = config.ENERGY_DRAIN_PER_60_MESSAGES
@@ -535,7 +590,6 @@ class Bot(commands.Bot):
         url_pattern = r'https?://[^\s]+'
         urls = re.findall(url_pattern, text)
         
-        # Временно заменяем URL на плейсхолдеры
         protected_text = text
         url_placeholders = {}
         for i, url in enumerate(urls):
@@ -551,11 +605,9 @@ class Bot(commands.Bot):
             discord_placeholders[placeholder] = emote
             protected_text = protected_text.replace(emote, placeholder)
         
-        # Защищаем Twitch-эмодзи от опечаток
         emote_placeholders = {}
         emote_counter = 0
         
-        # Проходим по тексту и заменяем эмодзи на плейсхолдеры
         for emote in state.all_known_emotes:
             if emote in protected_text:
                 placeholder = f"__EMOTE_{emote_counter}__"
@@ -563,7 +615,6 @@ class Bot(commands.Bot):
                 protected_text = protected_text.replace(emote, placeholder)
                 emote_counter += 1
         
-        # Вероятность опечатки зависит от настроения
         typo_chance = config.TYPO_PROBABILITY
         if state.mood > 70:
             typo_chance *= 1.5
@@ -571,10 +622,8 @@ class Bot(commands.Bot):
             typo_chance *= 0.5
         
         if random.random() > typo_chance or len(protected_text) < 10:
-            # Не добавляем опечатки, возвращаем оригинальный текст
             return text, None
         
-        # Сначала пытаемся использовать словарь замен
         words = protected_text.split()
         typo_made = False
         original_word = None
@@ -598,15 +647,12 @@ class Bot(commands.Bot):
         if typo_made:
             result_text = ' '.join(words)
             
-            # Восстанавливаем URL
             for placeholder, url in url_placeholders.items():
                 result_text = result_text.replace(placeholder, url)
             
-            # Восстанавливаем Discord эмодзи
             for placeholder, emote in discord_placeholders.items():
                 result_text = result_text.replace(placeholder, emote)
             
-            # Восстанавливаем Twitch эмодзи
             for placeholder, emote in emote_placeholders.items():
                 result_text = result_text.replace(placeholder, emote)
             
@@ -615,7 +661,6 @@ class Bot(commands.Bot):
             else:
                 return result_text, None
         
-        # Если словарь не сработал, используем старый метод
         attempts = 0
         max_attempts = 10
         
@@ -632,13 +677,11 @@ class Bot(commands.Bot):
             word_to_modify = random.choice(valid_words)
             word_index = words.index(word_to_modify)
             
-            # Чистим слово от знаков препинания
             clean_word = word_to_modify.rstrip('.,!?;:')
             if len(clean_word) < 3:
                 attempts += 1
                 continue
             
-            # Выбираем случайную позицию в слове
             pos = random.randint(1, len(clean_word) - 1)
             char = clean_word[pos].lower()
             
@@ -646,7 +689,6 @@ class Bot(commands.Bot):
                 typo_char = random.choice(config.TYPO_MAP[char])
                 typo_word = clean_word[:pos] + typo_char + clean_word[pos + 1:]
                 
-                # Сохраняем знаки препинания
                 if len(word_to_modify) > len(clean_word):
                     typo_word += word_to_modify[len(clean_word):]
                 
@@ -682,8 +724,6 @@ class Bot(commands.Bot):
             if match:
                 fact = match.group(group).strip()
                 if len(fact) > 5 and len(fact) < 100:
-                    # Предполагаем, что первое слово в сообщении - это начало предложения
-                    # и добавляем его к факту
                     first_word_match = re.match(r'\b(\w+)', message)
                     if first_word_match:
                         prefix = first_word_match.group(1).lower()
@@ -712,15 +752,8 @@ class Bot(commands.Bot):
         mass_emote = database.detect_mass_reaction(state.name, recent_seconds=10)
         
         if mass_emote and mass_emote not in state.used_emotes:
-            # Подхватываем волну
-            # await channel.send(mass_emote) # Не можем использовать await здесь
-            # database.save_message(state.name, self.nick, mass_emote, is_bot=True)
-            # state.used_emotes.append(mass_emote)
-            # state.last_response_time = datetime.datetime.now()
-            # state.messages_sent_count += 1
             logging.info(f"[{state.name}] Обнаружена массовая реакция: {mass_emote}")
-            # Вместо прямого ответа, добавим это в логику event_message, где есть await
-            # return True # Возвращаем True, чтобы event_message знал об этом
+            return True
         
         return False
     
@@ -729,26 +762,20 @@ class Bot(commands.Bot):
         Определяет, должен ли бот ответить на сообщение.
         Учитывает кулдауны, активность чата, усталость, занятость, энергию и отношения.
         """
-        # Проверяем режим занятости
         if state.is_busy:
             if datetime.datetime.now() < state.busy_until:
-                # В режиме занятости отвечаем редко
                 if random.random() > config.BUSY_RESPONSE_CHANCE:
                     logging.debug(f"[{state.name}] Бот занят до {state.busy_until}")
                     return False
             else:
-                # Выходим из режима занятости
                 state.is_busy = False
                 logging.info(f"[{state.name}] Бот вышел из режима занятости")
         
-        # Всегда отвечаем на упоминание (если не сильно занята)
         if is_mentioned:
             if state.is_busy and random.random() < 0.7:
-                # Даже на упоминание не всегда отвечаем когда занята
                 return False
             return True
         
-        # Не отвечаем на свои сообщения
         if author.lower() == self.nick.lower():
             return False
         
@@ -758,7 +785,6 @@ class Bot(commands.Bot):
         activity = database.get_chat_activity(state.name, minutes=1)
         is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
         
-        # Применяем множитель к кулдаунам при усталости
         min_cooldown = config.MIN_RESPONSE_COOLDOWN
         max_cooldown = config.MAX_RESPONSE_COOLDOWN
         
@@ -767,24 +793,20 @@ class Bot(commands.Bot):
             max_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
             logging.debug(f"[{state.name}] Чат активный ({activity} сообщ/мин), усталость активна")
         
-        # Проверяем минимальный кулдаун
         if time_since_response < min_cooldown:
             logging.debug(f"[{state.name}] Кулдаун: {time_since_response:.0f}с < {min_cooldown:.0f}с")
             return False
         
-        # Проверяем количество сообщений с последнего ответа бота
         if state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
             logging.debug(f"[{state.name}] Недостаточно сообщений: {state.message_count_since_response} < {config.MIN_MESSAGES_BEFORE_RESPONSE}")
             return False
         
-        # Проверяем максимальный кулдаун
         if time_since_response > max_cooldown:
             logging.info(f"[{state.name}] Превышен MAX кулдаун ({max_cooldown:.0f}с), бот должен ответить")
             return True
         
         relationship = database.get_user_relationship(state.name, author)
         
-        # Модифицируем вероятность в зависимости от отношений
         base_probability = config.RESPONSE_PROBABILITY
         
         if relationship['level'] == 'favorite':
@@ -796,7 +818,6 @@ class Bot(commands.Bot):
         elif relationship['level'] == 'toxic':
             base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
         
-        # Энергия влияет на вероятность
         if state.energy < 30:
             base_probability *= 0.5
         elif state.energy > 80:
@@ -829,14 +850,11 @@ class Bot(commands.Bot):
     async def simulate_typing_delay(self, message_length: int, is_mentioned: bool):
         """Имитирует задержку печатания в зависимости от длины сообщения."""
         if is_mentioned:
-            # При упоминании отвечаем быстрее
             base_delay = config.MIN_TYPING_DELAY
         else:
-            # Случайная задержка в диапазоне
             base_delay = random.uniform(config.MIN_TYPING_DELAY, config.MAX_TYPING_DELAY)
         
-        # Добавляем небольшую задержку в зависимости от длины (имитация печати)
-        typing_delay = base_delay + (message_length / 200)  # ~0.5 сек на 100 символов
+        typing_delay = base_delay + (message_length / 200)
         
         await asyncio.sleep(typing_delay)
 
@@ -871,7 +889,6 @@ class Bot(commands.Bot):
             logging.info(f"   🔤 Раскладка исправлена: '{original_content}' -> '{corrected_content}'")
             content = corrected_content
         else:
-            # Если translate_layout ничего не изменил, пробуем smart_transliterate
             content = self.smart_transliterate(original_content, state)
             if content != original_content:
                 logging.info(f"   🔤 Транслитерация: '{original_content}' -> '{content}'")
@@ -893,26 +910,19 @@ class Bot(commands.Bot):
 
         is_mentioned = f"@{self.nick.lower()}" in content.lower() or self.nick.lower() in content.lower()
         
-        # Логирование упоминания
         if is_mentioned:
             logging.info(f"🔔 Бот упомянут в сообщении!")
         
-        # Проверяем отношения с пользователем
         user_relationship = database.get_user_relationship(channel_name, author)
         
-        # Извлечение фактов
         user_fact = self.extract_user_fact(author, content)
         if user_fact:
             database.save_user_fact(channel_name, author, user_fact)
             logging.info(f"💾 Сохранен факт о пользователе: {user_fact}")
         
-        # Обновление настроения
         self.update_mood(state, content)
-        
-        # Обновление энергии
         self.update_energy(state)
 
-        # Проверка на keyword триггеры
         quick_response = self.check_keyword_triggers(content, state)
         if quick_response:
             logging.info(f"⚡ БЫСТРАЯ РЕАКЦИЯ (keyword триггер)")
@@ -925,11 +935,8 @@ class Bot(commands.Bot):
             logging.info("─" * 80)
             return
         
-        # Проверка массовых реакций
-        # Здесь мы будем использовать result_of_mass_reaction, т.к. handle_mass_reaction не может использовать await
         result_of_mass_reaction = self.handle_mass_reaction(state, message.channel)
         if result_of_mass_reaction:
-            # Если обнаружена массовая реакция, отправляем ее
             mass_emote = database.detect_mass_reaction(state.name, recent_seconds=10)
             if mass_emote and mass_emote not in state.used_emotes:
                 await message.channel.send(mass_emote)
@@ -943,7 +950,6 @@ class Bot(commands.Bot):
         
         state.message_count_since_response += 1
 
-        # Решение: отвечать или нет
         should_reply = self.should_respond(state, is_mentioned, author)
         
         logging.info(f"🤔 АНАЛИЗ ОТВЕТА:")
@@ -958,7 +964,6 @@ class Bot(commands.Bot):
         logging.info(f"   • Модель: {config.AI_MODEL}")
         logging.info(f"   • Контекст: последние {config.CONTEXT_SIZE} сообщений")
         
-        # Генерация ответа через AI
         context_messages = database.get_last_messages(channel_name, limit=config.CONTEXT_SIZE)
         prompt = self.build_prompt(state, is_mentioned)
         user_facts = database.get_user_facts(channel_name, author)
@@ -969,7 +974,7 @@ class Bot(commands.Bot):
             current_message=f"{author}: {content}",
             bot_nick=self.nick,
             is_mentioned=is_mentioned,
-            user_facts=user_facts,  # Changed from user_memory to user_facts
+            user_facts=user_facts,
             chat_phrases=state.chat_phrases,
             energy_level=int(state.energy)
         )
@@ -1000,7 +1005,6 @@ class Bot(commands.Bot):
             logging.info("─" * 80)
             return
 
-        # Добавление опечаток
         final_text, typo_fix = self.add_typo(cleaned, state)
         
         if typo_fix:
@@ -1012,7 +1016,6 @@ class Bot(commands.Bot):
         logging.info(f"💬 ФИНАЛЬНЫЙ ОТВЕТ: {final_text}")
         logging.info(f"   Длина: {len(final_text)} символов")
 
-        # Отложенный ответ
         if random.random() < config.DELAYED_RESPONSE_CHANCE and not is_mentioned:
             delay = random.uniform(config.DELAYED_RESPONSE_MIN, config.DELAYED_RESPONSE_MAX)
             logging.info(f"⏰ ОТЛОЖЕННЫЙ ОТВЕТ: через {delay:.0f} секунд")
@@ -1033,7 +1036,6 @@ class Bot(commands.Bot):
 
         database.update_user_relationship(channel_name, author, is_positive=True)
 
-        # Отправка исправления опечатки
         if state.pending_typo_fix:
             await asyncio.sleep(random.uniform(2, 5))
             await message.channel.send(state.pending_typo_fix)
@@ -1042,7 +1044,6 @@ class Bot(commands.Bot):
 
         logging.info("─" * 80)
 
-    # Вспомогательная функция для логирования вероятности ответа
     def calculate_response_probability(self, state: ChannelState, author: str) -> float:
         now = datetime.datetime.now()
         time_since_response = (now - state.last_response_time).total_seconds()
@@ -1082,7 +1083,7 @@ class Bot(commands.Bot):
         logging.info("🔄 Цикл обновления трендов запущен")
         
         while True:
-            await asyncio.sleep(1800)  # Каждые 30 минут
+            await asyncio.sleep(1800)
             
             logging.info("=" * 80)
             logging.info("📈 ОБНОВЛЕНИЕ ТРЕНДОВ")
@@ -1090,7 +1091,6 @@ class Bot(commands.Bot):
             for channel_name, state in self.channel_states.items():
                 logging.info(f"   Канал: {channel_name}")
                 
-                # Обновляем популярные смайлики
                 popular = database.get_popular_emotes(channel_name, hours=24)
                 if popular:
                     state.popular_emotes = [e["emote"] for e in popular[:20]]
@@ -1116,13 +1116,13 @@ class Bot(commands.Bot):
             f"Напиши короткую мысль (макс {config.MAX_RESPONSE_LENGTH} символов).",
         ]
         while True:
-            await asyncio.sleep(60)  # Проверяем каждую минуту
+            await asyncio.sleep(60)
             now = datetime.datetime.now()
             for channel_name, state in self.channel_states.items():
                 time_since_msg = (now - state.last_message_time).total_seconds()
                 time_since_bot = (now - state.last_silence_break_time).total_seconds()
 
-                if time_since_msg > 600:  # 10 минут
+                if time_since_msg > 600:
                     self.restore_energy_after_silence(state)
 
                 if time_since_msg > config.SILENCE_THRESHOLD and time_since_bot > config.BOT_SILENCE_COOLDOWN:
@@ -1171,7 +1171,7 @@ class Bot(commands.Bot):
         logging.info("🔄 Цикл проверки режима занятости запущен")
         
         while True:
-            await asyncio.sleep(3600)  # Каждый час
+            await asyncio.sleep(3600)
             
             for channel_name, state in self.channel_states.items():
                 if random.random() < config.BUSY_MODE_CHANCE:
@@ -1212,7 +1212,6 @@ class Bot(commands.Bot):
         logging.info("🚀 Бот начинает работу...")
         logging.info("=" * 80)
         
-        # Запускаем фоновые задачи
         self.loop.create_task(self.update_trends_loop())
         self.loop.create_task(self.check_silence_loop())
         self.loop.create_task(self.check_busy_mode_loop())
