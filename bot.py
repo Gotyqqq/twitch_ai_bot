@@ -405,6 +405,26 @@ class Bot(commands.Bot):
         
         return text, None
     
+    def extract_user_fact(self, username: str, message: str) -> str | None:
+        """Пытается извлечь факт о пользователе из его сообщения."""
+        message_lower = message.lower()
+        
+        # Паттерны для извлечения фактов
+        patterns = [
+            (r'я (играю|люблю|смотрю|слушаю|занимаюсь) (.+)', 2),
+            (r'у меня (.+)', 1),
+            (r'я (.+ лет|работаю|учусь)', 1),
+        ]
+        
+        for pattern, group in patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fact = match.group(group).strip()
+                if len(fact) > 5 and len(fact) < 100:
+                    return f"{username} {match.group(1)} {fact}"
+        
+        return None
+    
     def check_keyword_triggers(self, message: str, state: ChannelState) -> str | None:
         """Проверяет keyword-триггеры и возвращает быструю реакцию без AI."""
         message_lower = message.lower()
@@ -551,64 +571,6 @@ class Bot(commands.Bot):
         typing_delay = base_delay + (message_length / 200)  # ~0.5 сек на 100 символов
         
         await asyncio.sleep(typing_delay)
-
-    def should_respond(self, state: ChannelState, is_mentioned: bool, author: str) -> bool:
-        """
-        Определяет, должен ли бот ответить на сообщение.
-        Учитывает кулдауны, активность чата, усталость, АФК и рандом.
-        """
-        if state.is_afk:
-            if datetime.datetime.now() < state.afk_until:
-                logging.debug(f"[{state.name}] Бот в АФК до {state.afk_until}")
-                return False
-            else:
-                # Выходим из АФК
-                state.is_afk = False
-                logging.info(f"[{state.name}] Бот вышел из АФК")
-        
-        # Всегда отвечаем на упоминание
-        if is_mentioned:
-            return True
-        
-        # Не отвечаем на свои сообщения (на всякий случай)
-        if author.lower() == self.nick.lower():
-            return False
-        
-        now = datetime.datetime.now()
-        time_since_response = (now - state.last_response_time).total_seconds()
-        
-        activity = database.get_chat_activity(state.name, minutes=1)
-        is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
-        
-        # Применяем множитель к кулдаунам при усталости
-        min_cooldown = config.MIN_RESPONSE_COOLDOWN
-        max_cooldown = config.MAX_RESPONSE_COOLDOWN
-        
-        if is_fatigued:
-            min_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
-            max_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
-            logging.debug(f"[{state.name}] Чат активный ({activity} сообщ/мин), усталость активна")
-        
-        # Проверяем минимальный кулдаун
-        if time_since_response < min_cooldown:
-            logging.debug(f"[{state.name}] Кулдаун: {time_since_response:.0f}с < {min_cooldown:.0f}с")
-            return False
-        
-        # Проверяем количество сообщений с последнего ответа бота
-        if state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
-            logging.debug(f"[{state.name}] Недостаточно сообщений: {state.message_count_since_response} < {config.MIN_MESSAGES_BEFORE_RESPONSE}")
-            return False
-        
-        # Проверяем максимальный кулдаун
-        if time_since_response > max_cooldown:
-            logging.info(f"[{state.name}] Превышен MAX кулдаун ({max_cooldown:.0f}с), бот должен ответить")
-            return True
-        
-        # Используем вероятность
-        should_reply = random.random() < config.RESPONSE_PROBABILITY
-        logging.debug(f"[{state.name}] Проверка вероятности: {should_reply} (шанс {config.RESPONSE_PROBABILITY})")
-        
-        return should_reply
 
     async def event_message(self, message):
         """Обработка входящих сообщений."""
@@ -854,6 +816,51 @@ class Bot(commands.Bot):
                                 state.recent_responses.append(final)
                                 state.message_count_since_response = 0
                                 state.messages_sent_count += 1
+
+    def get_mood_description(self, mood: float) -> str:
+        """Возвращает описание настроения в зависимости от его значения."""
+        if mood >= 80:
+            return "очень радостная"
+        elif mood >= 60:
+            return "радостная"
+        elif mood >= 40:
+            return "нейтральная"
+        elif mood >= 20:
+            return "недовольная"
+        else:
+            return "очень недовольная"
+
+    def get_time_of_day_mood(self) -> str:
+        """Возвращает описание настроения в зависимости от времени суток."""
+        hour = datetime.datetime.now().hour
+        if 0 <= hour < 7:
+            return "очень усталая"
+        elif 7 <= hour < 10:
+            return "утренняя"
+        elif 10 <= hour < 15:
+            return "дневная"
+        elif 15 <= hour < 18:
+            return "вечерняя"
+        elif 18 <= hour < 23:
+            return "ночная"
+        else:
+            return "очень усталая"
+
+    def add_interjection(self, text: str) -> str:
+        """Добавляет случайную интеръекцию в начало сообщения."""
+        interjections = ["ну", "типа", "кстати", "вот", "так"]
+        return random.choice(interjections) + " " + text
+
+    async def send_long_message(self, channel, message):
+        """Отправляет длинное сообщение, разбивая его на части."""
+        max_length = 500
+        if len(message) > max_length:
+            parts = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+            for part in parts:
+                await channel.send(part)
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+        else:
+            await channel.send(message)
 
 
 if __name__ == "__main__":
