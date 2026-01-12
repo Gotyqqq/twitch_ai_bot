@@ -47,7 +47,6 @@ def init_db(channel_name: str):
             cursor.execute("ALTER TABLE messages ADD COLUMN is_bot INTEGER DEFAULT 0")
             print(f"[{channel_name}] Добавлена колонка is_bot в таблицу messages")
         
-        # Инициализация таблицы для хранения фактов о пользователях
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,12 +65,12 @@ def init_db(channel_name: str):
                 negative_count INTEGER DEFAULT 0,
                 total_messages INTEGER DEFAULT 0,
                 relationship_level TEXT DEFAULT 'stranger',
-                last_interaction DATETIME,
-                UNIQUE(username)
+                last_interaction DATETIME
             )
         """)
         
         conn.commit()
+        print(f"[{channel_name}] База данных инициализирована")
 
 
 def save_message(channel_name: str, author: str, content: str, is_bot: bool = False):
