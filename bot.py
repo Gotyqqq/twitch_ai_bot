@@ -611,9 +611,6 @@ class Bot(commands.Bot):
     async def update_trends_loop(self):
         await self.wait_for_ready()
         
-        for channel_name in config.TWITCH_CHANNELS:
-            database.init_user_facts_table(channel_name)
-        
         while True:
             for channel_name, state in self.channel_states.items():
                 # Обновляем популярные слова и смайлики
