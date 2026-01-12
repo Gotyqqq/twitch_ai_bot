@@ -180,6 +180,25 @@ def looks_like_russian_word(word: str) -> bool:
     # Если прошли все проверки - вероятно русское слово
     return True
 
+COMMON_TWITCH_EMOTES = [
+    # Базовые Twitch смайлики
+    "Kappa", "KappaHD", "KappaPride", "LUL", "LULW", "OMEGALUL", 
+    "Pog", "PogU", "PogChamp", "Poggers", "KEKW", "KEKWait", 
+    "monkaS", "monkaW", "monkaGIGA", "PepeHands", "Sadge", "Okayge",
+    "FeelsGoodMan", "FeelsBadMan", "FeelsStrongMan", "FeelsWeirdMan",
+    "WeirdChamp", "WeirdDude", "widepeepoHappy", "widepeepoSad",
+    "PepeLaugh", "AYAYA", "NaM", "forsen", "forsenpls",
+    "EZ", "Clap", "PauseChamp", "ResidentSleeper", "BibleThump",
+    "SourPls", "CoolStoryBob", "NotLikeThis", "TriHard", "SMOrc",
+    "Jebaited", "WutFace", "OpieOP", "4Head", "BrainSlug",
+    "DansGame", "SwiftRage", "FailFish", "VoHiYo", "PJSalt",
+    "CoolCat", "VoteYea", "VoteNay", "MrDestructoid",
+    # Популярные 7TV/BTTV
+    "FeelsDankMan", "forsenCD", "forsenE", "forsenPls", "gachiHYPER",
+    "peepoClown", "Aware", "Clueless", "Aware", "modCheck",
+    "GIGACHAD", "Chatting", "Copege", "Madge", "BatChest"
+]
+
 class ChannelState:
     def __init__(self, channel_name: str):
         self.name = channel_name
@@ -189,7 +208,7 @@ class ChannelState:
 
         self.standard_emotes = ["Pog", "LUL", "Kappa", "KEKW", "PogU", "WeirdChamp", "monkaS", "PepeHands", "FeelsBadMan", "FeelsGoodMan"]
         self.third_party_emotes: list[str] = []
-        self.all_known_emotes: list[str] = []
+        self.all_known_emotes: list[str] = COMMON_TWITCH_EMOTES.copy()
         self.popular_emotes: list[str] = []
         
         self.used_emotes: deque[str] = deque(maxlen=config.EMOTE_COOLDOWN_SIZE)
@@ -264,8 +283,9 @@ class Bot(commands.Bot):
                 result.append(word)
                 continue
             
-            # 3. Пропускаем известные смайлики из списка
-            if word in state.all_known_emotes:
+            # 3. Проверяем, может это уже русский текст
+            ru_chars = sum(1 for c in word if c in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
+            if ru_chars > 0:
                 result.append(word)
                 continue
             
@@ -277,6 +297,10 @@ class Bot(commands.Bot):
             # 5. Отделяем знаки препинания в конце
             stripped_word = word.rstrip('.,!?;:')
             punctuation = word[len(stripped_word):]
+            
+            if not stripped_word:
+                result.append(word)
+                continue
             
             word_lower = stripped_word.lower()
             
@@ -363,6 +387,10 @@ class Bot(commands.Bot):
             stripped_word = word.rstrip('.,!?;:')
             punctuation = word[len(stripped_word):]
             
+            if not stripped_word:
+                result_words.append(word)
+                continue
+            
             word_lower = stripped_word.lower()
             
             # 5. Проверяем структуру смайлика
@@ -374,22 +402,17 @@ class Bot(commands.Bot):
                 result_words.append(word)
                 continue
             
-            ru_letters = sum(1 for c in stripped_word if 'а' <= c.lower() <= 'я' or c.lower() == 'ё')
-            # Если в слове уже есть русские буквы (50%+), НЕ трогаем его
-            if ru_letters > len(stripped_word) * 0.5:
+            # 6. Проверяем, не является ли слово уже русским
+            ru_chars = sum(1 for c in stripped_word if c in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
+            en_chars = sum(1 for c in stripped_word if c.isalpha() and c not in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')
+            
+            # Если уже 50%+ русских букв - не трогаем
+            if ru_chars > 0 and ru_chars >= len(stripped_word) * 0.5:
                 result_words.append(word)
                 continue
             
-            # 6. Подсчитываем символы из английской раскладки
-            en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
-            
-            if en_chars < 3:
-                result_words.append(word)
-                continue
-            
-            # Определяем, написано ли на английской раскладке вместо русской
-            if en_chars >= len(stripped_word) * 0.7:
-                # Написано на английской вместо русской - пробуем конвертировать
+            # 7. Проверяем, есть ли английские буквы для конвертации
+            if en_chars > 0:
                 translated_chars = []
                 for char in stripped_word:
                     if char in config.EN_TO_RU_LAYOUT:
@@ -432,15 +455,15 @@ class Bot(commands.Bot):
         words = text.split()
         cleaned_words = []
         for i, word in enumerate(words):
-            # Проверяем, является ли слово смайликом
-            clean_word = re.sub(r'^[^\w]+|[^\w]+$', '', word)
+            word_without_punct = re.sub(r'^[^\w]+|[^\w]+$', '', word)
             
-            if clean_word in state.all_known_emotes:
-                # Это смайлик - убираем все знаки препинания вокруг него
-                cleaned_words.append(clean_word)
-            elif re.match(r'^[A-Z][a-zA-Z0-9]+$', word) and word not in state.all_known_emotes:
-                # Странное слово с большой буквы, не смайлик - пропускаем
-                continue
+            # Проверяем в базовом списке смайликов
+            if word_without_punct in COMMON_TWITCH_EMOTES or word_without_punct in state.all_known_emotes:
+                cleaned_words.append(word_without_punct)
+            # Проверяем паттерн смайлика (CamelCase или UPPERCASE)
+            elif re.match(r'^[A-Z][a-z]*([A-Z][a-z]*)+$|^[A-Z]{3,}$', word_without_punct):
+                # Похоже на смайлик - оставляем без знаков препинания
+                cleaned_words.append(word_without_punct)
             else:
                 cleaned_words.append(word)
 
@@ -454,49 +477,6 @@ class Bot(commands.Bot):
                 result = result[0].lower() + result[1:]
         
         return result
-
-    def add_emote_to_response(self, text: str, state: ChannelState) -> str:
-        """Добавляет подходящий смайл с максимальным разнообразием."""
-        words = text.split()
-
-        # Если в конце уже есть смайлик, ничего не добавляем
-        if words and words[-1] in state.all_known_emotes:
-            return text
-
-        # Используем вероятность из конфига
-        if random.random() > config.EMOTE_ADD_PROBABILITY:
-            return text
-
-        # Сначала пытаемся использовать популярные смайлики, которые не в кулдауне
-        available = [e for e in state.popular_emotes if e not in state.used_emotes]
-        
-        if not available:
-            # Если все популярные в кулдауне, берем из всех известных
-            available = [e for e in state.all_known_emotes if e not in state.used_emotes]
-        
-        if not available:
-            # Если совсем ничего нет, частично очищаем кулдаун
-            if len(state.used_emotes) >= config.EMOTE_COOLDOWN_SIZE // 2:
-                # Очищаем треть кулдауна для обновления
-                for _ in range(config.EMOTE_COOLDOWN_SIZE // 3):
-                    if state.used_emotes:
-                        state.used_emotes.popleft()
-            
-            available = [e for e in state.popular_emotes if e]
-            if not available:
-                available = state.standard_emotes
-
-        if available:
-            # Взвешенный выбор: 60% из топ-5, 40% из всех (больше случайности)
-            if len(available) > 5 and random.random() < 0.6:
-                emote = random.choice(available[:5])
-            else:
-                emote = random.choice(available)
-            
-            state.used_emotes.append(emote)
-            return f"{text} {emote}"
-
-        return text
 
     def is_repetitive(self, response: str, state: ChannelState) -> bool:
         """Проверяет, не повторяется ли ответ."""
@@ -1141,7 +1121,11 @@ class Bot(commands.Bot):
                 popular = database.get_popular_emotes(channel_name, hours=24)
                 if popular:
                     state.popular_emotes = [e["emote"] for e in popular[:20]]
+                    unique_emotes = set(state.all_known_emotes)
+                    unique_emotes.update([e["emote"] for e in popular[:50]])
+                    state.all_known_emotes = list(unique_emotes)
                     logging.info(f"      Популярные смайлы: {', '.join(state.popular_emotes[:5])}")
+                    logging.info(f"      Всего известных смайлов: {len(state.all_known_emotes)}")
 
                 chat_phrases = database.get_popular_phrases(channel_name, hours=48)
                 if chat_phrases:
