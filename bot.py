@@ -804,48 +804,27 @@ class Bot(commands.Bot):
         Определяет, должен ли бот ответить на сообщение.
         Учитывает кулдауны, активность чата, усталость, занятость, энергию и отношения.
         """
-        # Проверяем режим занятости
-        if state.is_busy:
-            if datetime.datetime.now() < state.busy_until:
-                # В режиме занятости отвечаем редко
-                if random.random() > config.BUSY_RESPONSE_CHANCE:
-                    logging.debug(f"[{state.name}] Бот занят до {state.busy_until}")
-                    return False
-            else:
-                # Выходим из режима занятости
-                state.is_busy = False
-                logging.info(f"[{state.name}] Бот вышел из режима занятости")
-        
         if is_mentioned:
-            if state.is_busy and random.random() < 0.7:
-                # Даже на упоминание не всегда отвечаем когда занята
-                return False
             logging.info(f"[{state.name}] Упоминание обнаружено - отвечаю обязательно")
             return True
         
-        # Не отвечаем на свои сообщения
-        if author.lower() == self.nick.lower():
+        if state.is_busy:
+            logging.debug(f"[{state.name}] Бот занят до {state.busy_until}")
             return False
         
         now = datetime.datetime.now()
         time_since_response = (now - state.last_response_time).total_seconds()
         
+        # Минимальный кулдаун
         activity = database.get_chat_activity(state.name, minutes=1)
         is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
+        min_cooldown = config.MIN_RESPONSE_COOLDOWN * (config.FATIGUE_COOLDOWN_MULTIPLIER if is_fatigued else 1)
         
-        # Применяем множитель к кулдаунам при усталости
-        min_cooldown = config.MIN_RESPONSE_COOLDOWN
-        max_cooldown = config.MAX_RESPONSE_COOLDOWN
-        
-        if is_fatigued:
-            min_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
-            max_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
-            logging.debug(f"[{state.name}] Чат активный ({activity} сообщ/мин), усталость активна")
-        
-        # Проверяем минимальный кулдаун
         if time_since_response < min_cooldown:
-            logging.debug(f"[{state.name}] Кулдаун: {time_since_response:.0f}с < {min_cooldown:.0f}с")
+            logging.debug(f"[{state.name}] Кулдаун активен: {time_since_response:.0f}с < {min_cooldown:.0f}с")
             return False
+        
+        max_cooldown = config.MAX_RESPONSE_COOLDOWN
         
         # Проверяем количество сообщений с последнего ответа бота
         if state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
@@ -862,13 +841,13 @@ class Bot(commands.Bot):
         # Модифицируем вероятность в зависимости от отношений
         base_probability = config.RESPONSE_PROBABILITY
         
-        if relationship['level'] == 'favorite':
+        if relationship['relationship_level'] == 'favorite':
             base_probability += config.RELATIONSHIP_FAVORITE_MODIFIER
-        elif relationship['level'] == 'friend':
+        elif relationship['relationship_level'] == 'friend':
             base_probability += config.RELATIONSHIP_FRIEND_MODIFIER
-        elif relationship['level'] == 'acquaintance':
+        elif relationship['relationship_level'] == 'acquaintance':
             base_probability += config.RELATIONSHIP_ACQUAINTANCE_MODIFIER
-        elif relationship['level'] == 'toxic':
+        elif relationship['relationship_level'] == 'toxic':
             base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
         
         # Энергия влияет на вероятность
@@ -880,7 +859,7 @@ class Bot(commands.Bot):
         base_probability = max(0.0, min(1.0, base_probability))
         
         should_reply = random.random() < base_probability
-        logging.debug(f"[{state.name}] Проверка вероятности: {should_reply} (шанс {base_probability:.2f}, отношения: {relationship['level']})")
+        logging.debug(f"[{state.name}] Проверка вероятности: {should_reply} (шанс {base_probability:.2f}, отношения: {relationship['relationship_level']})")
         
         return should_reply
 
@@ -1050,7 +1029,7 @@ class Bot(commands.Bot):
             user_facts=user_facts,
             chat_phrases=state.chat_phrases,
             energy_level=int(state.energy),
-            relationship_level=user_relationship['level']
+            relationship_level=user_relationship['relationship_level']
         )
 
         if not response:
@@ -1134,15 +1113,17 @@ class Bot(commands.Bot):
         
         base_probability = config.RESPONSE_PROBABILITY
         relationship = database.get_user_relationship(state.name, author)
-        if relationship['level'] == 'favorite':
-            base_probability += config.RELATIONSHIP_FAVORITE_MODIFIER
-        elif relationship['level'] == 'friend':
-            base_probability += config.RELATIONSHIP_FRIEND_MODIFIER
-        elif relationship['level'] == 'acquaintance':
-            base_probability += config.RELATIONSHIP_ACQUAINTANCE_MODIFIER
-        elif relationship['level'] == 'toxic':
-            base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
         
+        if relationship['relationship_level'] == 'favorite':
+            base_probability += config.RELATIONSHIP_FAVORITE_MODIFIER
+        elif relationship['relationship_level'] == 'friend':
+            base_probability += config.RELATIONSHIP_FRIEND_MODIFIER
+        elif relationship['relationship_level'] == 'acquaintance':
+            base_probability += config.RELATIONSHIP_ACQUAINTANCE_MODIFIER
+        elif relationship['relationship_level'] == 'toxic':
+            base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
+
+        # Энергия влияет на вероятность
         if state.energy < 30:
             base_probability *= 0.5
         elif state.energy > 80:
