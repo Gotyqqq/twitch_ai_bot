@@ -4,6 +4,7 @@ import datetime
 import re
 from collections import Counter
 import config
+import logging
 
 EMOJI_PATTERN = re.compile(
     "["
@@ -333,7 +334,8 @@ def get_hot_topics(channel_name: str, time_minutes: int = 10) -> list[str]:
         
         word_counts = Counter(words)
         return [w for w, _ in word_counts.most_common(5)]
-    except sqlite3.Error:
+    except sqlite3.Error as e:
+        print(f"Ошибка БД {db_name}: {e}")
         return []
 
 
@@ -342,6 +344,27 @@ def update_user_relationship(channel_name: str, username: str, is_positive: bool
     db_name = get_db_name(channel_name)
     with sqlite3.connect(db_name) as conn:
         cursor = conn.cursor()
+        
+        # Проверяем существование таблицы
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='user_relationships'
+        """)
+        
+        if not cursor.fetchone():
+            # Таблица не существует, создаем её
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_relationships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    positive_count INTEGER DEFAULT 0,
+                    negative_count INTEGER DEFAULT 0,
+                    total_messages INTEGER DEFAULT 0,
+                    relationship_level TEXT DEFAULT 'stranger',
+                    last_interaction DATETIME
+                )
+            """)
+            conn.commit()
         
         # Получаем текущую статистику
         cursor.execute(
@@ -416,34 +439,67 @@ def update_relationship_level(channel_name: str, username: str):
 
 
 def get_user_relationship(channel_name: str, username: str) -> dict:
-    """Возвращает информацию об отношениях с пользователем."""
+    """Получает информацию об отношениях с пользователем."""
     db_name = get_db_name(channel_name)
+    
     try:
         with sqlite3.connect(db_name) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """SELECT positive_count, negative_count, total_messages, relationship_level 
-                   FROM user_relationships WHERE username = ?""",
-                (username.lower(),)
-            )
-            result = cursor.fetchone()
             
-            if result:
+            # Проверяем существование таблицы
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='user_relationships'
+            """)
+            
+            if not cursor.fetchone():
+                # Таблица не существует, создаем её
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_relationships (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL UNIQUE,
+                        positive_count INTEGER DEFAULT 0,
+                        negative_count INTEGER DEFAULT 0,
+                        total_messages INTEGER DEFAULT 0,
+                        relationship_level TEXT DEFAULT 'stranger',
+                        last_interaction DATETIME
+                    )
+                """)
+                conn.commit()
+            
+            cursor.execute("""
+                SELECT positive_count, negative_count, total_messages, 
+                       relationship_level, last_interaction
+                FROM user_relationships
+                WHERE username = ?
+            """, (username.lower(),))
+            
+            row = cursor.fetchone()
+            if row:
                 return {
-                    'positive': result[0],
-                    'negative': result[1],
-                    'total': result[2],
-                    'level': result[3]
+                    "positive_count": row[0],
+                    "negative_count": row[1],
+                    "total_messages": row[2],
+                    "relationship_level": row[3],
+                    "last_interaction": row[4]
                 }
             else:
                 return {
-                    'positive': 0,
-                    'negative': 0,
-                    'total': 0,
-                    'level': 'stranger'
+                    "positive_count": 0,
+                    "negative_count": 0,
+                    "total_messages": 0,
+                    "relationship_level": "stranger",
+                    "last_interaction": None
                 }
-    except sqlite3.Error:
-        return {'positive': 0, 'negative': 0, 'total': 0, 'level': 'stranger'}
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении user_relationship для {username}: {e}")
+        return {
+            "positive_count": 0,
+            "negative_count": 0,
+            "total_messages": 0,
+            "relationship_level": "stranger",
+            "last_interaction": None
+        }
 
 
 def detect_mass_reaction(channel_name: str, recent_seconds: int = 10) -> str | None:
