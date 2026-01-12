@@ -261,12 +261,11 @@ def get_chat_activity(channel_name: str, minutes: int = 1) -> int:
 
 
 def get_last_bot_response_reactions(channel_name: str) -> int:
-    """Считает количество ответов на последнее сообщение бота (для feedback loop)."""
+    """Считает, сколько пользователей ответили на последнее сообщение бота."""
     db_name = get_db_name(channel_name)
     try:
         with sqlite3.connect(db_name) as conn:
             cursor = conn.cursor()
-            # Находим последнее сообщение бота
             cursor.execute(
                 "SELECT id, timestamp FROM messages WHERE is_bot = 1 ORDER BY timestamp DESC LIMIT 1"
             )
@@ -276,10 +275,18 @@ def get_last_bot_response_reactions(channel_name: str) -> int:
                 return 0
             
             bot_id, bot_time = last_bot
+            # Конвертируем строку в datetime, если необходимо
+            if isinstance(bot_time, str):
+                bot_time = datetime.datetime.fromisoformat(bot_time)
+            
+            # Вычисляем время окончания и конвертируем обратно в строку для SQL
+            end_time = bot_time + datetime.timedelta(seconds=30)
+            end_time_str = end_time.isoformat()
+            
             # Считаем сообщения пользователей в течение 30 секунд после сообщения бота
             cursor.execute(
                 "SELECT COUNT(*) FROM messages WHERE is_bot = 0 AND id > ? AND timestamp < ?",
-                (bot_id, bot_time + datetime.timedelta(seconds=30))
+                (bot_id, end_time_str)
             )
             return cursor.fetchone()[0]
     except sqlite3.Error:
