@@ -41,13 +41,22 @@ def init_db(channel_name: str):
             )
         """)
         
-        # <CHANGE> Миграция: добавляем колонку is_bot если её нет
         cursor.execute("PRAGMA table_info(messages)")
         columns = [col[1] for col in cursor.fetchall()]
         if 'is_bot' not in columns:
             cursor.execute("ALTER TABLE messages ADD COLUMN is_bot INTEGER DEFAULT 0")
             print(f"[{channel_name}] Добавлена колонка is_bot в таблицу messages")
         
+        # Инициализация таблицы для хранения фактов о пользователях
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                fact TEXT NOT NULL,
+                timestamp DATETIME NOT NULL,
+                UNIQUE(username, fact)
+            )
+        """)
         conn.commit()
 
 
@@ -79,7 +88,48 @@ def get_last_messages(channel_name: str, limit: int) -> list[dict]:
     ]
 
 
-def get_chat_trends(channel_name: str, known_emotes: list[str], top_n: int = 8) -> tuple[list[str], list[str]]:
+def get_chat_phrases(channel_name: str, min_frequency: int = 3) -> list[str]:
+    """
+    Анализирует частые фразы из 2-3 слов в чате для копирования стиля.
+    """
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            # Берем только сообщения пользователей (не бота)
+            cursor.execute(
+                "SELECT content FROM messages WHERE is_bot = 0 ORDER BY timestamp DESC LIMIT 300"
+            )
+            messages = cursor.fetchall()
+        
+        if not messages:
+            return []
+        
+        phrases = []
+        for (message,) in messages:
+            words = message.lower().split()
+            # Извлекаем фразы из 2-3 слов
+            for i in range(len(words) - 1):
+                two_word = f"{words[i]} {words[i+1]}"
+                if len(two_word) > 5:  # Минимальная длина фразы
+                    phrases.append(two_word)
+                
+                if i < len(words) - 2:
+                    three_word = f"{words[i]} {words[i+1]} {words[i+2]}"
+                    if len(three_word) > 8:
+                        phrases.append(three_word)
+        
+        # Считаем частоту
+        phrase_counts = Counter(phrases)
+        # Возвращаем только частые фразы
+        return [phrase for phrase, count in phrase_counts.most_common(20) if count >= min_frequency]
+    except sqlite3.Error as e:
+        print(f"Ошибка БД {db_name}: {e}")
+        return []
+
+
+def get_chat_trends(channel_name: str, known_emotes: list[str], top_n: int = 12) -> tuple[list[str], list[str]]:
+    """Увеличено top_n для большего разнообразия смайликов."""
     db_name = get_db_name(channel_name)
     try:
         with sqlite3.connect(db_name) as conn:
@@ -116,3 +166,152 @@ def get_chat_trends(channel_name: str, known_emotes: list[str], top_n: int = 8) 
     except sqlite3.Error as e:
         print(f"Ошибка БД {db_name}: {e}")
         return [], []
+
+
+def count_messages_since_bot(channel_name: str) -> int:
+    """Считает сообщения пользователей после последнего сообщения бота."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            # Находим последнее сообщение бота
+            cursor.execute(
+                "SELECT id FROM messages WHERE is_bot = 1 ORDER BY timestamp DESC LIMIT 1"
+            )
+            last_bot = cursor.fetchone()
+            
+            if not last_bot:
+                # Если бот еще не писал, считаем все сообщения
+                cursor.execute("SELECT COUNT(*) FROM messages WHERE is_bot = 0")
+                return cursor.fetchone()[0]
+            
+            # Считаем сообщения пользователей после последнего сообщения бота
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE is_bot = 0 AND id > ?",
+                (last_bot[0],)
+            )
+            return cursor.fetchone()[0]
+    except sqlite3.Error as e:
+        print(f"Ошибка БД {db_name}: {e}")
+        return 0
+
+
+def save_user_fact(channel_name: str, username: str, fact: str):
+    """Сохраняет факт о пользователе."""
+    if not fact or len(fact) < 10:  # Игнорируем слишком короткие факты
+        return
+    
+    db_name = get_db_name(channel_name)
+    with sqlite3.connect(db_name) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_facts (username, fact, timestamp) VALUES (?, ?, ?)",
+                (username.lower(), fact, datetime.datetime.now())
+            )
+            conn.commit()
+            
+            # Ограничиваем количество фактов
+            cursor.execute(
+                "SELECT COUNT(*) FROM user_facts WHERE username = ?",
+                (username.lower(),)
+            )
+            count = cursor.fetchone()[0]
+            
+            if count > config.MAX_USER_FACTS // 10:  # Максимум 5 фактов на пользователя
+                cursor.execute(
+                    "DELETE FROM user_facts WHERE id IN "
+                    "(SELECT id FROM user_facts WHERE username = ? ORDER BY timestamp ASC LIMIT 1)",
+                    (username.lower(),)
+                )
+                conn.commit()
+        except sqlite3.Error:
+            pass
+
+
+def get_user_facts(channel_name: str, username: str) -> list[str]:
+    """Получает факты о пользователе."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT fact FROM user_facts WHERE username = ? ORDER BY timestamp DESC LIMIT 5",
+                (username.lower(),)
+            )
+            return [row[0] for row in cursor.fetchall()]
+    except sqlite3.Error:
+        return []
+
+
+def get_chat_activity(channel_name: str, minutes: int = 1) -> int:
+    """Возвращает количество сообщений за последние N минут."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(minutes=minutes)
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE timestamp > ? AND is_bot = 0",
+                (threshold,)
+            )
+            return cursor.fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+def get_last_bot_response_reactions(channel_name: str) -> int:
+    """Считает количество ответов на последнее сообщение бота (для feedback loop)."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            # Находим последнее сообщение бота
+            cursor.execute(
+                "SELECT id, timestamp FROM messages WHERE is_bot = 1 ORDER BY timestamp DESC LIMIT 1"
+            )
+            last_bot = cursor.fetchone()
+            
+            if not last_bot:
+                return 0
+            
+            bot_id, bot_time = last_bot
+            # Считаем сообщения пользователей в течение 30 секунд после сообщения бота
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE is_bot = 0 AND id > ? AND timestamp < ?",
+                (bot_id, bot_time + datetime.timedelta(seconds=30))
+            )
+            return cursor.fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+def get_hot_topics(channel_name: str, time_minutes: int = 10) -> list[str]:
+    """Анализирует самые обсуждаемые слова за последние N минут."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(minutes=time_minutes)
+            cursor.execute(
+                "SELECT content FROM messages WHERE timestamp > ? AND is_bot = 0",
+                (threshold,)
+            )
+            messages = cursor.fetchall()
+        
+        if not messages:
+            return []
+        
+        words = []
+        stop_words = {'и', 'в', 'не', 'на', 'я', 'с', 'что', 'он', 'по', 'это', 'но', 'как', 'а', 'то', 'ну', 'ты'}
+        
+        for (message,) in messages:
+            for word in message.lower().split():
+                cleaned = re.sub(r'[^\w]', '', word)
+                if len(cleaned) > 3 and cleaned not in stop_words:
+                    words.append(cleaned)
+        
+        word_counts = Counter(words)
+        return [w for w, _ in word_counts.most_common(5)]
+    except sqlite3.Error:
+        return []
