@@ -103,8 +103,8 @@ RELATIONSHIP_TOXIC_MODIFIER = -0.3
 
 # --- СМАЙЛИКИ ---
 FETCH_7TV_EMOTES = True
-EMOTE_COOLDOWN_SIZE = 15
-EMOTE_ADD_PROBABILITY = 0.4
+EMOTE_COOLDOWN_SIZE = 20  # Было 15
+EMOTE_ADD_PROBABILITY = 0.3  # Было 0.4
 
 # --- АНТИ-ТИШИНА ---
 SILENCE_THRESHOLD = 10000
@@ -184,7 +184,7 @@ FORBIDDEN_WORDS = [
 POSITIVE_INDICATORS = ['lul', 'lol', 'kek', 'pog', 'nice', 'good', 'хорошо', 'круто', 'топ', 'класс', 'ахах', 'хах']
 NEGATIVE_INDICATORS = ['плохо', 'бред', 'отстой', 'sad', 'monkas', 'weird', 'zzz', 'boring', 'скучно', 'грустно']
 
-INTERJECTIONS = ['ну', 'эм', 'хмм', 'типа', 'короче', 'кстати', 'вот', 'так']
+INTERJECTIONS = ['ну', 'эм', 'хмм', 'типа', 'короче', 'кстати', 'вот', 'так', 'короч', 'блин']
 
 TYPO_MAP = {
     'а': ['о', 'я'],
