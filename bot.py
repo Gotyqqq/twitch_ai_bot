@@ -391,7 +391,7 @@ class Bot(commands.Bot):
         Добавляет случайную опечатку в текст.
         Возвращает (текст_с_опечаткой, исправление_или_None)
         """
-        # Находим все URL в тексте
+        # Защищаем URL и Twitch-эмодзи от опечаток
         url_pattern = r'https?://[^\s]+'
         urls = re.findall(url_pattern, text)
         
@@ -403,71 +403,101 @@ class Bot(commands.Bot):
             url_placeholders[placeholder] = url
             protected_text = protected_text.replace(url, placeholder)
         
+        # Защищаем Twitch-эмодзи от опечаток
+        emote_placeholders = {}
+        words = protected_text.split()
+        new_words = []
+        emote_counter = 0
+        
+        for word in words:
+            # Убираем знаки препинания для проверки
+            clean_word = re.sub(r'[^\w]', '', word)
+            if clean_word in state.all_known_emotes:
+                placeholder = f"__EMOTE_{emote_counter}__"
+                emote_placeholders[placeholder] = word
+                new_words.append(placeholder)
+                emote_counter += 1
+            else:
+                new_words.append(word)
+        
+        protected_text = ' '.join(new_words)
+        
         # Вероятность опечатки зависит от настроения
         typo_chance = config.TYPO_PROBABILITY
         if state.mood > 70:
-            typo_chance *= 1.5  # Больше опечаток в хорошем настроении
+            typo_chance *= 1.5
         elif state.mood < 40:
-            typo_chance *= 0.5  # Меньше опечаток в плохом настроении
+            typo_chance *= 0.5
         
         if random.random() > typo_chance or len(protected_text) < 10:
-            return text, None  # Возвращаем оригинальный текст с URL
+            # Восстанавливаем URL и эмодзи из оригинального текста
+            return text, None
         
         # Сначала пытаемся использовать словарь замен
         words = protected_text.split()
         for i, word in enumerate(words):
-            if word.startswith('__URL_'):
+            # Пропускаем плейсхолдеры
+            if word.startswith('__URL_') or word.startswith('__EMOTE_'):
                 continue
                 
             word_lower = word.lower()
             if word_lower in config.TYPO_REPLACEMENTS:
-                if random.random() < 0.7:  # 70% шанс использовать словарь
+                if random.random() < 0.7:
                     typo_variant = random.choice(config.TYPO_REPLACEMENTS[word_lower])
-                    # Сохраняем регистр первой буквы
-                    if word[0].isupper():
+                    if word and word[0].isupper():
                         typo_variant = typo_variant.capitalize()
                     
                     original_word = words[i]
                     words[i] = typo_variant
                     result_text = ' '.join(words)
                     
+                    # Восстанавливаем URL и эмодзи
                     for placeholder, url in url_placeholders.items():
                         result_text = result_text.replace(placeholder, url)
+                    for placeholder, emote in emote_placeholders.items():
+                        result_text = result_text.replace(placeholder, emote)
                     
-                    # Решаем, исправлять ли опечатку
                     if random.random() < config.TYPO_FIX_PROBABILITY:
                         return result_text, f"*{original_word}"
                     else:
                         return result_text, None
         
         # Если словарь не сработал, используем старый метод
-        word_idx = random.randint(0, len(words) - 1)
-        word = words[word_idx]
+        attempts = 0
+        max_attempts = len(words)
         
-        if word.startswith('__URL_'):
-            # Восстанавливаем URL и возвращаем без изменений
-            for placeholder, url in url_placeholders.items():
-                text = text.replace(placeholder, url)
-            return text, None
+        while attempts < max_attempts:
+            word_idx = random.randint(0, len(words) - 1)
+            word = words[word_idx]
+            
+            # Пропускаем плейсхолдеры
+            if word.startswith('__URL_') or word.startswith('__EMOTE_'):
+                attempts += 1
+                continue
+            
+            # Пытаемся найти символ для замены
+            for i, char in enumerate(word):
+                if char.lower() in config.TYPO_MAP:
+                    typo_char = random.choice(config.TYPO_MAP[char.lower()])
+                    if char.isupper():
+                        typo_char = typo_char.upper()
+                    words[word_idx] = word[:i] + typo_char + word[i+1:]
+                    result_text = ' '.join(words)
+                    
+                    # Восстанавливаем URL и эмодзи
+                    for placeholder, url in url_placeholders.items():
+                        result_text = result_text.replace(placeholder, url)
+                    for placeholder, emote in emote_placeholders.items():
+                        result_text = result_text.replace(placeholder, emote)
+                    
+                    if random.random() < config.TYPO_FIX_PROBABILITY:
+                        return result_text, f"*{word}"
+                    else:
+                        return result_text, None
+            
+            attempts += 1
         
-        for i, char in enumerate(word):
-            if char.lower() in config.TYPO_MAP:
-                typo_char = random.choice(config.TYPO_MAP[char.lower()])
-                if char.isupper():
-                    typo_char = typo_char.upper()
-                words[word_idx] = word[:i] + typo_char + word[i+1:]
-                result_text = ' '.join(words)
-                
-                for placeholder, url in url_placeholders.items():
-                    result_text = result_text.replace(placeholder, url)
-                
-                if random.random() < config.TYPO_FIX_PROBABILITY:
-                    return result_text, f"*{word}"
-                else:
-                    return result_text, None
-        
-        for placeholder, url in url_placeholders.items():
-            text = text.replace(placeholder, url)
+        # Если не получилось добавить опечатку, возвращаем оригинал
         return text, None
     
     def extract_user_fact(self, username: str, message: str) -> str | None:
@@ -496,8 +526,7 @@ class Bot(commands.Bot):
         
         for keyword, responses in config.KEYWORD_TRIGGERS.items():
             if keyword in message_lower:
-                # 50% шанс сработать
-                if random.random() < 0.5:
+                if random.random() < 0.10:
                     return random.choice(responses)
         
         return None
@@ -1100,4 +1129,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("\n" + "=" * 80)
         logging.info("👋 БОТ ОСТАНОВЛЕН ПОЛЬЗОВАТЕЛЕМ")
+        logging.info("=" * 80)
         logging.info("=" * 80)
