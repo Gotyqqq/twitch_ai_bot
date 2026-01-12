@@ -212,6 +212,7 @@ class ChannelState:
         self.popular_emotes: list[str] = []
         
         self.used_emotes: deque[str] = deque(maxlen=config.EMOTE_COOLDOWN_SIZE)
+        self.recent_emotes: deque[str] = deque(maxlen=20) # Для отслеживания последних добавленных смайликов
         
         self.recent_responses: deque[str] = deque(maxlen=5)
         
@@ -455,7 +456,8 @@ class Bot(commands.Bot):
         words = text.split()
         cleaned_words = []
         for i, word in enumerate(words):
-            word_without_punct = re.sub(r'^[^\w]+|[^\w]+$', '', word)
+            # Убираем все знаки препинания с конца слова
+            word_without_punct = word.rstrip('.,!?;:')
             
             # Проверяем в базовом списке смайликов
             if word_without_punct in COMMON_TWITCH_EMOTES or word_without_punct in state.all_known_emotes:
@@ -465,6 +467,7 @@ class Bot(commands.Bot):
                 # Похоже на смайлик - оставляем без знаков препинания
                 cleaned_words.append(word_without_punct)
             else:
+                # Обычное слово - оставляем как есть (со знаками препинания)
                 cleaned_words.append(word)
 
         result = ' '.join(cleaned_words).strip()
@@ -859,6 +862,27 @@ class Bot(commands.Bot):
         typing_delay = base_delay + (message_length / 200)
         
         await asyncio.sleep(typing_delay)
+
+    def add_emote_to_response(self, text: str, state: ChannelState) -> str:
+        """Добавляет случайный популярный смайлик в конец ответа."""
+        if not state.popular_emotes:
+            return text
+
+        # Шанс добавления смайлика
+        if random.random() < config.EMOTE_ADD_CHANCE:
+            # 70% шанс выбрать из топ-5, 30% из всех популярных
+            if random.random() < 0.7:
+                available_emotes = [e for e in state.popular_emotes[:5] if e not in state.used_emotes]
+            else:
+                available_emotes = [e for e in state.popular_emotes if e not in state.used_emotes]
+            
+            if available_emotes:
+                selected_emote = random.choice(available_emotes)
+                state.used_emotes.append(selected_emote)
+                logging.info(f"😀 Добавляю смайлик: {selected_emote}")
+                return f"{text} {selected_emote}"
+        return text
+
 
     async def event_message(self, message: Message):
         """Обработка входящих сообщений."""
