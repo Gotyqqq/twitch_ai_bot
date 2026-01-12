@@ -110,6 +110,49 @@ EMOTE_ADD_PROBABILITY = 0.4
 SILENCE_THRESHOLD = 10000
 BOT_SILENCE_COOLDOWN = 28800
 
+# Discord эмодзи в формате :emoji:
+DISCORD_EMOTES = [
+    ":smile:", ":laughing:", ":blush:", ":heart:", ":heart_eyes:",
+    ":kissing_heart:", ":relaxed:", ":grin:", ":wink:", ":stuck_out_tongue_winking_eye:",
+    ":stuck_out_tongue_closed_eyes:", ":stuck_out_tongue:", ":flushed:", ":grinning:",
+    ":pensive:", ":relieved:", ":unamused:", ":disappointed:", ":persevere:",
+    ":cry:", ":joy:", ":sob:", ":sleepy:", ":disappointed_relieved:",
+    ":cold_sweat:", ":sweat_smile:", ":sweat:", ":weary:", ":tired_face:",
+    ":fearful:", ":scream:", ":angry:", ":rage:", ":triumph:",
+    ":confounded:", ":laughing:", ":yum:", ":mask:", ":sunglasses:",
+    ":sleeping:", ":dizzy_face:", ":astonished:", ":worried:", ":frowning:",
+    ":anguished:", ":smiling_imp:", ":imp:", ":open_mouth:", ":grimacing:",
+    ":neutral_face:", ":confused:", ":hushed:", ":no_mouth:", ":innocent:",
+    ":smirk:", ":expressionless:", ":thinking:", ":shrug:", ":wave:",
+    ":raised_hand:", ":ok_hand:", ":thumbsup:", ":thumbsdown:", ":clap:",
+    ":fire:", ":100:", ":eyes:", ":skull:", ":ghost:",
+    ":alien:", ":robot:", ":poop:", ":clown:", ":nerd:",
+]
+
+# Английская -> Русская раскладка
+EN_TO_RU_LAYOUT = {
+    'q': 'й', 'w': 'ц', 'e': 'у', 'r': 'к', 't': 'е', 'y': 'н', 'u': 'г', 'i': 'ш', 'o': 'щ', 'p': 'з',
+    '[': 'х', ']': 'ъ', 'a': 'ф', 's': 'ы', 'd': 'в', 'f': 'а', 'g': 'п', 'h': 'р', 'j': 'о', 'k': 'л',
+    'l': 'д', ';': 'ж', "'": 'э', 'z': 'я', 'x': 'ч', 'c': 'с', 'v': 'м', 'b': 'и', 'n': 'т', 'm': 'ь',
+    ',': 'б', '.': 'ю', '/': '.',
+    'Q': 'Й', 'W': 'Ц', 'E': 'У', 'R': 'К', 'T': 'Е', 'Y': 'Н', 'U': 'Г', 'I': 'Ш', 'O': 'Щ', 'P': 'З',
+    '{': 'Х', '}': 'Ъ', 'A': 'Ф', 'S': 'Ы', 'D': 'В', 'F': 'А', 'G': 'П', 'H': 'Р', 'J': 'О', 'K': 'Л',
+    'L': 'Д', ':': 'Ж', '"': 'Э', 'Z': 'Я', 'X': 'Ч', 'C': 'С', 'V': 'М', 'B': 'И', 'N': 'Т', 'M': 'Ь',
+    '<': 'Б', '>': 'Ю', '?': ',',
+}
+
+# Русская -> Английская раскладка
+RU_TO_EN_LAYOUT = {
+    'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p',
+    'х': '[', 'ъ': ']', 'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h', 'о': 'j', 'л': 'k',
+    'д': 'l', 'ж': ';', 'э': "'", 'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n', 'ь': 'm',
+    'б': ',', 'ю': '.', '.': '/',
+    'Й': 'Q', 'Ц': 'W', 'У': 'E', 'К': 'R', 'Е': 'T', 'Н': 'Y', 'Г': 'U', 'Ш': 'I', 'Щ': 'O', 'З': 'P',
+    'Х': '{', 'Ъ': '}', 'Ф': 'A', 'Ы': 'S', 'В': 'D', 'А': 'F', 'П': 'G', 'Р': 'H', 'О': 'J', 'Л': 'K',
+    'Д': 'L', 'Ж': ':', 'Э': '"', 'Я': 'Z', 'Ч': 'X', 'С': 'C', 'М': 'V', 'И': 'B', 'Т': 'N', 'Ь': 'M',
+    'Б': '<', 'Ю': '>', ',': '?',
+}
+
 # --- ИМИТАЦИЯ ПЕЧАТИ ---
 WPM_MIN = 150
 WPM_NORMAL = 220
