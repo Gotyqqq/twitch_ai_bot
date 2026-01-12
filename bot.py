@@ -502,7 +502,7 @@ class Bot(commands.Bot):
         
         return None
     
-    async def handle_mass_reaction(self, state: ChannelState, channel) -> bool:
+    def handle_mass_reaction(self, state: ChannelState, channel) -> bool:
         """
         Проверяет массовую реакцию и реагирует на неё.
         Возвращает True если сработала массовая реакция.
@@ -511,13 +511,14 @@ class Bot(commands.Bot):
         
         if mass_emote and mass_emote not in state.used_emotes:
             # Подхватываем волну
-            await channel.send(mass_emote)
-            database.save_message(state.name, self.nick, mass_emote, is_bot=True)
-            state.used_emotes.append(mass_emote)
-            state.last_response_time = datetime.datetime.now()
-            state.messages_sent_count += 1
-            logging.info(f"[{state.name}] Подхвачена массовая реакция: {mass_emote}")
-            return True
+            # await channel.send(mass_emote) # Не можем использовать await здесь
+            # database.save_message(state.name, self.nick, mass_emote, is_bot=True)
+            # state.used_emotes.append(mass_emote)
+            # state.last_response_time = datetime.datetime.now()
+            # state.messages_sent_count += 1
+            logging.info(f"[{state.name}] Обнаружена массовая реакция: {mass_emote}")
+            # Вместо прямого ответа, добавим это в логику event_message, где есть await
+            # return True # Возвращаем True, чтобы event_message знал об этом
         
         return False
     
@@ -684,22 +685,16 @@ class Bot(commands.Bot):
         # Логирование упоминания
         if is_mentioned:
             logging.info(f"🔔 Бот упомянут в сообщении!")
-
-        user_stats = database.get_user_stats(channel_name, author)
-        if user_stats and user_stats["messages_count"] > 5:
-            recent_messages = database.get_recent_messages(channel_name, limit=5, username=author)
-            if len(recent_messages) >= 3:
-                if all(msg["text"] == recent_messages[0]["text"] for msg in recent_messages):
-                    logging.warning(f"⚠️  СПАМ обнаружен от {author}, игнорируем")
-                    database.update_user_relationship(channel_name, author, is_positive=False)
-                    return
-
+        
+        # Проверяем отношения с пользователем
+        user_relationship = database.get_user_relationship(channel_name, author)
+        
         # Извлечение фактов
         user_fact = self.extract_user_fact(author, content)
         if user_fact:
-            database.save_user_memory(channel_name, author, user_fact)
+            database.save_user_fact(channel_name, author, user_fact)
             logging.info(f"💾 Сохранен факт о пользователе: {user_fact}")
-
+        
         # Обновление настроения
         self.update_mood(state, content)
         
@@ -720,10 +715,21 @@ class Bot(commands.Bot):
             return
 
         # Проверка массовых реакций
-        if await self.handle_mass_reaction(state, message.channel):
-            logging.info(f"🎉 Обработана массовая реакция")
-            return
-
+        # Здесь мы будем использовать result_of_mass_reaction, т.к. handle_mass_reaction не может использовать await
+        result_of_mass_reaction = self.handle_mass_reaction(state, message.channel)
+        if result_of_mass_reaction:
+            # Если обнаружена массовая реакция, отправляем ее
+            mass_emote = database.detect_mass_reaction(state.name, recent_seconds=10)
+            if mass_emote and mass_emote not in state.used_emotes:
+                await message.channel.send(mass_emote)
+                database.save_message(channel_name, self.nick, mass_emote, is_bot=True)
+                state.used_emotes.append(mass_emote)
+                state.last_response_time = now
+                state.messages_sent_count += 1
+                logging.info(f"🎉 Подхвачена массовая реакция: {mass_emote}")
+                logging.info("─" * 80)
+                return
+        
         state.message_count_since_response += 1
 
         # Решение: отвечать или нет
@@ -740,19 +746,19 @@ class Bot(commands.Bot):
         logging.info(f"🤖 ГЕНЕРАЦИЯ ОТВЕТА ЧЕРЕЗ AI...")
         logging.info(f"   • Модель: {config.AI_MODEL}")
         logging.info(f"   • Контекст: последние {config.CONTEXT_SIZE} сообщений")
-
+        
         # Генерация ответа через AI
-        context_messages = database.get_recent_messages(channel_name, limit=config.CONTEXT_SIZE)
+        context_messages = database.get_last_messages(channel_name, limit=config.CONTEXT_SIZE)
         prompt = self.build_prompt(state, is_mentioned)
-        user_memory = database.get_user_memory(channel_name, author)
-
+        user_facts = database.get_user_facts(channel_name, author)
+        
         response = await ai_service.generate_response(
             system_prompt=prompt,
             context_messages=context_messages,
             current_message=f"{author}: {content}",
             bot_nick=self.nick,
             is_mentioned=is_mentioned,
-            user_memory=user_memory,
+            user_memory=user_facts,
             chat_phrases=state.chat_phrases,
             energy_level=int(state.energy)
         )
