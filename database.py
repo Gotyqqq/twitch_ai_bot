@@ -57,6 +57,20 @@ def init_db(channel_name: str):
                 UNIQUE(username, fact)
             )
         """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                positive_count INTEGER DEFAULT 0,
+                negative_count INTEGER DEFAULT 0,
+                total_messages INTEGER DEFAULT 0,
+                relationship_level TEXT DEFAULT 'stranger',
+                last_interaction DATETIME,
+                UNIQUE(username)
+            )
+        """)
+        
         conn.commit()
 
 
@@ -322,3 +336,146 @@ def get_hot_topics(channel_name: str, time_minutes: int = 10) -> list[str]:
         return [w for w, _ in word_counts.most_common(5)]
     except sqlite3.Error:
         return []
+
+
+def update_user_relationship(channel_name: str, username: str, is_positive: bool = True):
+    """Обновляет статистику отношений с пользователем."""
+    db_name = get_db_name(channel_name)
+    with sqlite3.connect(db_name) as conn:
+        cursor = conn.cursor()
+        
+        # Получаем текущую статистику
+        cursor.execute(
+            "SELECT positive_count, negative_count, total_messages FROM user_relationships WHERE username = ?",
+            (username.lower(),)
+        )
+        result = cursor.fetchone()
+        
+        if result:
+            positive, negative, total = result
+            if is_positive:
+                positive += 1
+            else:
+                negative += 1
+            total += 1
+            
+            cursor.execute(
+                """UPDATE user_relationships 
+                   SET positive_count = ?, negative_count = ?, total_messages = ?, last_interaction = ?
+                   WHERE username = ?""",
+                (positive, negative, total, datetime.datetime.now(), username.lower())
+            )
+        else:
+            # Создаем новую запись
+            cursor.execute(
+                """INSERT INTO user_relationships 
+                   (username, positive_count, negative_count, total_messages, last_interaction)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (username.lower(), 1 if is_positive else 0, 0 if is_positive else 1, 1, datetime.datetime.now())
+            )
+        
+        conn.commit()
+        
+        # Обновляем уровень отношений
+        update_relationship_level(channel_name, username)
+
+
+def update_relationship_level(channel_name: str, username: str):
+    """Определяет уровень отношений на основе статистики."""
+    db_name = get_db_name(channel_name)
+    with sqlite3.connect(db_name) as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT positive_count, negative_count FROM user_relationships WHERE username = ?",
+            (username.lower(),)
+        )
+        result = cursor.fetchone()
+        
+        if not result:
+            return
+        
+        positive, negative = result
+        
+        # Определяем уровень
+        if negative >= config.RELATIONSHIP_TOXIC_THRESHOLD:
+            level = 'toxic'
+        elif positive >= config.RELATIONSHIP_FAVORITE_THRESHOLD:
+            level = 'favorite'
+        elif positive >= config.RELATIONSHIP_FRIEND_THRESHOLD:
+            level = 'friend'
+        elif positive >= config.RELATIONSHIP_ACQUAINTANCE_THRESHOLD:
+            level = 'acquaintance'
+        else:
+            level = 'stranger'
+        
+        cursor.execute(
+            "UPDATE user_relationships SET relationship_level = ? WHERE username = ?",
+            (level, username.lower())
+        )
+        conn.commit()
+
+
+def get_user_relationship(channel_name: str, username: str) -> dict:
+    """Возвращает информацию об отношениях с пользователем."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT positive_count, negative_count, total_messages, relationship_level 
+                   FROM user_relationships WHERE username = ?""",
+                (username.lower(),)
+            )
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'positive': result[0],
+                    'negative': result[1],
+                    'total': result[2],
+                    'level': result[3]
+                }
+            else:
+                return {
+                    'positive': 0,
+                    'negative': 0,
+                    'total': 0,
+                    'level': 'stranger'
+                }
+    except sqlite3.Error:
+        return {'positive': 0, 'negative': 0, 'total': 0, 'level': 'stranger'}
+
+
+def detect_mass_reaction(channel_name: str, recent_seconds: int = 10) -> str | None:
+    """Определяет массовую реакцию (если 3+ человека написали одно и то же)."""
+    db_name = get_db_name(channel_name)
+    try:
+        with sqlite3.connect(db_name) as conn:
+            cursor = conn.cursor()
+            threshold = datetime.datetime.now() - datetime.timedelta(seconds=recent_seconds)
+            cursor.execute(
+                "SELECT content FROM messages WHERE timestamp > ? AND is_bot = 0",
+                (threshold,)
+            )
+            messages = cursor.fetchall()
+            
+            if len(messages) < config.MASS_REACTION_THRESHOLD:
+                return None
+            
+            # Считаем смайлики
+            emote_counts = Counter()
+            for (message,) in messages:
+                words = message.split()
+                for word in words:
+                    if word in config.MASS_REACTION_EMOTES:
+                        emote_counts[word] += 1
+            
+            # Проверяем, есть ли смайлик с 3+ упоминаниями
+            for emote, count in emote_counts.most_common(1):
+                if count >= config.MASS_REACTION_THRESHOLD:
+                    return emote
+            
+            return None
+    except sqlite3.Error:
+        return None
