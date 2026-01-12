@@ -8,6 +8,7 @@ from collections import deque, Counter
 import httpx
 from twitchio.ext import commands
 from twitchio.message import Message
+import pymorphy2
 
 import config
 import database
@@ -76,21 +77,66 @@ KNOWN_EMOTE_PATTERNS = [
     'weirdchamp', 'widepeepo', 'pepe', 'monka', 'catjam', 'modcheck', 'sus', 'based'
 ]
 
+COMMON_RUSSIAN_WORDS = {
+    'привет', 'спасибо', 'пожалуйста', 'да', 'нет', 'как', 'что', 'где', 'когда', 'почему',
+    'зачем', 'который', 'хочу', 'могу', 'буду', 'был', 'была', 'были', 'есть', 'нету',
+    'ага', 'неа', 'люблю', 'нравится', 'думаю', 'знаю', 'понял', 'поняла', 'понятно',
+    'ладно', 'хорошо', 'плохо', 'отлично', 'супер', 'круто', 'класс', 'кайф', 'больше',
+    'меньше', 'сильно', 'слабо', 'быстро', 'медленно', 'горячо', 'холодно', 'тепло',
+    'игра', 'играю', 'смотрю', 'слушаю', 'говорю', 'скажу', 'отвечу', 'спрошу', 'расскажу',
+    'сейчас', 'щас', 'потом', 'вчера', 'завтра', 'сегодня', 'всегда', 'никогда', 'иногда',
+    'часто', 'редко', 'можно', 'нельзя', 'надо', 'нужно', 'должен', 'должна', 'хорош',
+    'норм', 'нормально', 'окей', 'ок', 'кек', 'лол', 'агась', 'неть', 'типа', 'вот',
+    'тут', 'там', 'здесь', 'тогда', 'сразу', 'потом', 'снова', 'опять', 'еще', 'уже',
+    'просто', 'только', 'даже', 'тоже', 'также', 'или', 'либо', 'ни', 'вообще', 'совсем',
+    'очень', 'слишком', 'почти', 'около', 'примерно', 'точно', 'наверно', 'может', 'возможно',
+    'конечно', 'разумеется', 'естественно', 'кстати', 'между', 'прочим', 'правда', 'серьезно',
+    'честно', 'реально', 'действительно', 'вроде', 'типо', 'чет', 'чето', 'чтото', 'ктото',
+    'кого', 'кому', 'кем', 'чего', 'чему', 'чем', 'какой', 'какая', 'какое', 'какие',
+    'такой', 'такая', 'такое', 'такие', 'этот', 'эта', 'это', 'эти', 'тот', 'та', 'то', 'те',
+    'мой', 'моя', 'мое', 'мои', 'твой', 'твоя', 'твое', 'твои', 'его', 'ее', 'их', 'наш', 'ваш',
+    'сам', 'сама', 'само', 'сами', 'весь', 'вся', 'все', 'всё', 'один', 'одна', 'одно', 'первый',
+    'делаю', 'делать', 'сделать', 'работаю', 'работать', 'пишу', 'писать', 'читаю', 'читать',
+    'вижу', 'видеть', 'слышу', 'слышать', 'чувствую', 'чувствовать', 'понимаю', 'понимать',
+    'помню', 'помнить', 'забыл', 'забыла', 'забыть', 'вспомнил', 'вспомнила', 'вспомнить',
+    'хотел', 'хотела', 'хотеть', 'мог', 'могла', 'мочь', 'умею', 'уметь', 'стараюсь', 'стараться'
+}
+
 RUSSIAN_COMMON_PATTERNS = [
-    # Распространенные корни
-    'прив', 'спас', 'пож', 'как', 'что', 'где', 'когд', 'почем', 'зачем', 'котор',
-    'хоч', 'мог', 'буд', 'был', 'есть', 'нет', 'да', 'ага', 'неа',
-    'люб', 'нрав', 'дума', 'знаю', 'понял', 'понятн', 'ладн', 'хорош', 'плох',
-    'больш', 'мал', 'сильн', 'слаб', 'быстр', 'медленн', 'горяч', 'холодн',
-    'игр', 'смотр', 'слуш', 'говор', 'скаж', 'отвеч', 'спрош', 'расск',
-    'сейчас', 'щас', 'потом', 'вчера', 'завтра', 'сегодн', 'всегда', 'никогда',
-    # Распространенные окончания
-    'ать', 'ять', 'ить', 'еть', 'уть', 'оть',  # глаголы
-    'аю', 'яю', 'ую', 'ою', 'ешь', 'ишь',  # глаголы личные формы
-    'ал', 'ял', 'ил', 'ел', 'ала', 'яла', 'ила', 'ела',  # прошедшее время
-    'ость', 'ность', 'тель', 'ание', 'ение', 'ство', 'ие',  # существительные
-    'ый', 'ий', 'ой', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие',  # прилагательные
+    'ся', 'сь', 'ть', 'ти', 'ши', 'щи', 'ча', 'ща', 'жи', 'чу', 'щу',
+    'ов', 'ев', 'ив', 'ый', 'ий', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие',
+    'ать', 'ять', 'еть', 'ить', 'оть', 'уть', 'ють',
+    'ла', 'ло', 'ли', 'ал', 'ол', 'ел', 'ил',
+    'ство', 'ение', 'ание', 'ость', 'ишь', 'ешь',
+    'при', 'пре', 'раз', 'без', 'воз', 'низ',
+    'ова', 'ева', 'ыва', 'ива'
 ]
+
+morph = pymorphy2.MorphAnalyzer()
+
+def is_valid_russian_word(word: str) -> bool:
+    """
+    Проверяет, является ли слово настоящим русским словом.
+    Использует pymorphy2 и словарь частых слов.
+    """
+    if not word or len(word) < 2:
+        return False
+    
+    word_lower = word.lower()
+    
+    # Быстрая проверка по словарю частых слов
+    if word_lower in COMMON_RUSSIAN_WORDS:
+        return True
+    
+    # Проверка через морфологический анализатор
+    parsed = morph.parse(word_lower)[0]
+    
+    # Проверяем, что слово русское и не является бессмыслицей
+    # score показывает уверенность в разборе (чем выше, тем лучше)
+    if parsed.score >= 0.3 and 'LATN' not in parsed.tag:
+        return True
+    
+    return False
 
 def looks_like_russian_word(word: str) -> bool:
     """
@@ -201,7 +247,8 @@ class Bot(commands.Bot):
     def smart_transliterate(self, text: str, state: ChannelState) -> str:
         """
         Транслитерирует ТОЛЬКО явно русские слова, написанные на английской раскладке.
-        НЕ трогает: смайлики (Kappa, LUL и т.д.), теги (@username), ссылки, никнеймы, английские слова.
+        НЕ трогает: смайлики, теги, ссылки, никнеймы, английские слова.
+        Использует pymorphy2 для валидации результата.
         """
         words = text.split()
         result = []
@@ -222,7 +269,7 @@ class Bot(commands.Bot):
                 result.append(word)
                 continue
             
-            # 4. Пропускаем короткие слова (вероятно смайлики типа LUL, Pog)
+            # 4. Пропускаем короткие слова (вероятно смайлики)
             if len(word) <= 2:
                 result.append(word)
                 continue
@@ -233,18 +280,17 @@ class Bot(commands.Bot):
             
             word_lower = stripped_word.lower()
             
-            # 6. Проверяем, похоже ли на известный смайлик по паттерну
+            # 6. Проверяем, похоже ли на известный смайлик
             is_known_emote_pattern = any(pattern in word_lower for pattern in KNOWN_EMOTE_PATTERNS)
             if is_known_emote_pattern:
                 result.append(word)
                 continue
             
-            # 7. Проверяем структуру слова - смайлики обычно CamelCase или UPPERCASE
+            # 7. Проверяем структуру - смайлики обычно CamelCase или UPPERCASE
             is_camel_case = (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]))
             is_all_upper = stripped_word.isupper()
             
             if (is_camel_case or is_all_upper) and len(stripped_word) <= 15:
-                # Вероятно смайлик - не трогаем
                 result.append(word)
                 continue
             
@@ -258,12 +304,12 @@ class Bot(commands.Bot):
             
             # Транслитерируем только если 80%+ символов из русской раскладки
             if len(alpha_chars) >= 3 and layout_chars_count / len(alpha_chars) >= 0.8:
-                # Дополнительная проверка: не является ли это английским словом
-                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh', 'qu', 'tion', 'ing']
+                # Проверка на английские паттерны
+                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh', 'qu', 'tion', 'ing', 'ght', 'tch']
                 is_likely_english = any(pattern in word_lower for pattern in english_patterns)
                 
                 if not is_likely_english:
-                    # Транслитерируем, сохраняя регистр
+                    # Транслитерируем с сохранением регистра
                     translated = ""
                     for c in stripped_word:
                         if c.lower() in TRANSLIT_MAP:
@@ -274,13 +320,13 @@ class Bot(commands.Bot):
                         else:
                             translated += c
                     
-                    if looks_like_russian_word(translated):
+                    if is_valid_russian_word(translated):
                         result.append(translated + punctuation)
-                        logging.info(f"   🔤 Транслитерация: '{stripped_word}' -> '{translated}'")
+                        logging.info(f"   🔤 Транслитерация: '{stripped_word}' -> '{translated}' ✓")
                     else:
-                        # Результат не похож на русское слово - оставляем оригинал
+                        # Результат не настоящее русское слово
                         result.append(word)
-                        logging.debug(f"   ⏭️ Пропущена транслитерация '{stripped_word}' -> '{translated}' (не похоже на русское слово)")
+                        logging.debug(f"   ⏭️ Пропущена транслитерация '{stripped_word}' -> '{translated}' (не русское слово)")
                 else:
                     result.append(word)
             else:
@@ -292,7 +338,7 @@ class Bot(commands.Bot):
         """
         Переводит текст с неправильной раскладки клавиатуры.
         НЕ трогает: смайлики, теги, ссылки, никнеймы.
-        Работает ПОСЛОВНО для точности.
+        Использует pymorphy2 для валидации результата.
         """
         words = text.split()
         result_words = []
@@ -319,7 +365,7 @@ class Bot(commands.Bot):
             
             word_lower = stripped_word.lower()
             
-            # 5. Проверяем, похоже ли на смайлик по структуре или паттерну
+            # 5. Проверяем структуру смайлика
             is_known_pattern = any(pattern in word_lower for pattern in KNOWN_EMOTE_PATTERNS)
             is_camel_case = (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]))
             is_all_upper = stripped_word.isupper()
@@ -332,14 +378,13 @@ class Bot(commands.Bot):
             en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
             ru_chars = sum(1 for c in stripped_word if c in config.RU_TO_EN_LAYOUT)
             
-            # Если символов мало, не переводим
             if en_chars + ru_chars < 3:
                 result_words.append(word)
                 continue
             
             # Определяем, какая раскладка преобладает
             if en_chars > ru_chars * 1.5:
-                # Вероятно написано на английской вместо русской
+                # Написано на английской вместо русской
                 translated_chars = []
                 for char in stripped_word:
                     if char in config.EN_TO_RU_LAYOUT:
@@ -349,15 +394,14 @@ class Bot(commands.Bot):
                 translated = ''.join(translated_chars)
                 
                 ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я' or c == 'ё')
-                if ru_letters > len(translated) * 0.5 and looks_like_russian_word(translated):
-                    logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
+                if ru_letters > len(translated) * 0.5 and is_valid_russian_word(translated):
+                    logging.info(f"   🔤 Исправлена раскладка: '{stripped_word}' -> '{translated}' ✓")
                     result_words.append(translated + punctuation)
                 else:
-                    # Результат не выглядит как русское слово - оставляем оригинал
                     result_words.append(word)
-                    logging.debug(f"   ⏭️ Пропущена конвертация '{stripped_word}' -> '{translated}' (не похоже на русское слово)")
+                    logging.debug(f"   ⏭️ Пропущена конвертация '{stripped_word}' -> '{translated}' (не русское слово)")
             elif ru_chars > en_chars * 1.5:
-                # Вероятно написано на русской вместо английской
+                # Написано на русской вместо английской
                 translated_chars = []
                 for char in stripped_word:
                     if char in config.RU_TO_EN_LAYOUT:
@@ -366,15 +410,13 @@ class Bot(commands.Bot):
                         translated_chars.append(char)
                 translated = ''.join(translated_chars)
                 
-                # Проверяем, получилось ли что-то осмысленное
                 en_letters = sum(1 for c in translated if 'a' <= c.lower() <= 'z')
                 if en_letters > len(translated) * 0.5:
-                    logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
+                    logging.info(f"   🔤 Исправлена раскладка: '{stripped_word}' -> '{translated}'")
                     result_words.append(translated + punctuation)
                 else:
                     result_words.append(word)
             else:
-                # Если ничего не подошло, возвращаем оригинал
                 result_words.append(word)
         
         return " ".join(result_words)
@@ -762,20 +804,26 @@ class Bot(commands.Bot):
         Определяет, должен ли бот ответить на сообщение.
         Учитывает кулдауны, активность чата, усталость, занятость, энергию и отношения.
         """
+        # Проверяем режим занятости
         if state.is_busy:
             if datetime.datetime.now() < state.busy_until:
+                # В режиме занятости отвечаем редко
                 if random.random() > config.BUSY_RESPONSE_CHANCE:
                     logging.debug(f"[{state.name}] Бот занят до {state.busy_until}")
                     return False
             else:
+                # Выходим из режима занятости
                 state.is_busy = False
                 logging.info(f"[{state.name}] Бот вышел из режима занятости")
         
         if is_mentioned:
             if state.is_busy and random.random() < 0.7:
+                # Даже на упоминание не всегда отвечаем когда занята
                 return False
+            logging.info(f"[{state.name}] Упоминание обнаружено - отвечаю обязательно")
             return True
         
+        # Не отвечаем на свои сообщения
         if author.lower() == self.nick.lower():
             return False
         
@@ -785,6 +833,7 @@ class Bot(commands.Bot):
         activity = database.get_chat_activity(state.name, minutes=1)
         is_fatigued = activity > config.CHAT_HIGH_ACTIVITY_THRESHOLD
         
+        # Применяем множитель к кулдаунам при усталости
         min_cooldown = config.MIN_RESPONSE_COOLDOWN
         max_cooldown = config.MAX_RESPONSE_COOLDOWN
         
@@ -793,20 +842,24 @@ class Bot(commands.Bot):
             max_cooldown *= config.FATIGUE_COOLDOWN_MULTIPLIER
             logging.debug(f"[{state.name}] Чат активный ({activity} сообщ/мин), усталость активна")
         
+        # Проверяем минимальный кулдаун
         if time_since_response < min_cooldown:
             logging.debug(f"[{state.name}] Кулдаун: {time_since_response:.0f}с < {min_cooldown:.0f}с")
             return False
         
+        # Проверяем количество сообщений с последнего ответа бота
         if state.message_count_since_response < config.MIN_MESSAGES_BEFORE_RESPONSE:
             logging.debug(f"[{state.name}] Недостаточно сообщений: {state.message_count_since_response} < {config.MIN_MESSAGES_BEFORE_RESPONSE}")
             return False
         
+        # Проверяем максимальный кулдаун
         if time_since_response > max_cooldown:
             logging.info(f"[{state.name}] Превышен MAX кулдаун ({max_cooldown:.0f}с), бот должен ответить")
             return True
         
         relationship = database.get_user_relationship(state.name, author)
         
+        # Модифицируем вероятность в зависимости от отношений
         base_probability = config.RESPONSE_PROBABILITY
         
         if relationship['level'] == 'favorite':
@@ -818,6 +871,7 @@ class Bot(commands.Bot):
         elif relationship['level'] == 'toxic':
             base_probability += config.RELATIONSHIP_TOXIC_MODIFIER
         
+        # Энергия влияет на вероятность
         if state.energy < 30:
             base_probability *= 0.5
         elif state.energy > 80:
@@ -882,20 +936,18 @@ class Bot(commands.Bot):
             logging.warning(f"⚠️  Канал {channel_name} не найден в состояниях")
             return
 
-        original_content = message.content
+        original_content = content
         corrected_content = self.translate_layout(original_content, state)
         
         if corrected_content != original_content:
-            logging.info(f"   🔤 Раскладка исправлена: '{original_content}' -> '{corrected_content}'")
             content = corrected_content
         else:
+            # Если translate_layout ничего не изменил, пробуем smart_transliterate
             content = self.smart_transliterate(original_content, state)
-            if content != original_content:
-                logging.info(f"   🔤 Транслитерация: '{original_content}' -> '{content}'")
 
         if self.is_toxic(content):
-            logging.warning(f"[{channel_name}] Токсичное сообщение от {message.author.name} скрыто")
-            database.update_user_relationship(channel_name, message.author.name, is_positive=False)
+            logging.warning(f"[{channel_name}] Токсичное сообщение от {author} скрыто")
+            database.update_user_relationship(channel_name, author, is_positive=False)
             return
 
         now = datetime.datetime.now()
@@ -908,21 +960,38 @@ class Bot(commands.Bot):
         logging.info(f"   • Сообщений отправлено: {state.messages_sent_count}")
         logging.info(f"   • Режим занятости: {'ДА' if state.is_busy else 'НЕТ'}")
 
-        is_mentioned = f"@{self.nick.lower()}" in content.lower() or self.nick.lower() in content.lower()
+        content_lower = content.lower()
+        nick_lower = self.nick.lower()
         
+        is_mentioned = (
+            f"@{nick_lower}" in content_lower or  # @имя
+            content_lower.startswith(f"{nick_lower},") or  # имя, в начале
+            content_lower.startswith(f"{nick_lower} ") or  # имя в начале
+            f" {nick_lower}" in content_lower or  # имя в середине
+            content_lower.endswith(f" {nick_lower}") or  # имя в конце
+            content_lower == nick_lower  # просто имя
+        )
+        
+        # Логирование упоминания
         if is_mentioned:
             logging.info(f"🔔 Бот упомянут в сообщении!")
         
+        # Проверяем отношения с пользователем
         user_relationship = database.get_user_relationship(channel_name, author)
         
+        # Извлечение фактов
         user_fact = self.extract_user_fact(author, content)
         if user_fact:
             database.save_user_fact(channel_name, author, user_fact)
             logging.info(f"💾 Сохранен факт о пользователе: {user_fact}")
         
+        # Обновление настроения
         self.update_mood(state, content)
+        
+        # Обновление энергии
         self.update_energy(state)
 
+        # Проверка на keyword триггеры
         quick_response = self.check_keyword_triggers(content, state)
         if quick_response:
             logging.info(f"⚡ БЫСТРАЯ РЕАКЦИЯ (keyword триггер)")
@@ -935,6 +1004,7 @@ class Bot(commands.Bot):
             logging.info("─" * 80)
             return
         
+        # Проверка массовых реакций
         result_of_mass_reaction = self.handle_mass_reaction(state, message.channel)
         if result_of_mass_reaction:
             mass_emote = database.detect_mass_reaction(state.name, recent_seconds=10)
@@ -950,6 +1020,7 @@ class Bot(commands.Bot):
         
         state.message_count_since_response += 1
 
+        # Решение: отвечать или нет
         should_reply = self.should_respond(state, is_mentioned, author)
         
         logging.info(f"🤔 АНАЛИЗ ОТВЕТА:")
@@ -963,7 +1034,9 @@ class Bot(commands.Bot):
         logging.info(f"🤖 ГЕНЕРАЦИЯ ОТВЕТА ЧЕРЕЗ AI...")
         logging.info(f"   • Модель: {config.AI_MODEL}")
         logging.info(f"   • Контекст: последние {config.CONTEXT_SIZE} сообщений")
+        logging.info(f"   • Упоминание: {'ДА (развернутый ответ)' if is_mentioned else 'НЕТ (краткий ответ)'}")
         
+        # Генерация ответа через AI
         context_messages = database.get_last_messages(channel_name, limit=config.CONTEXT_SIZE)
         prompt = self.build_prompt(state, is_mentioned)
         user_facts = database.get_user_facts(channel_name, author)
@@ -976,7 +1049,8 @@ class Bot(commands.Bot):
             is_mentioned=is_mentioned,
             user_facts=user_facts,
             chat_phrases=state.chat_phrases,
-            energy_level=int(state.energy)
+            energy_level=int(state.energy),
+            relationship_level=user_relationship['level']
         )
 
         if not response:
@@ -1005,6 +1079,7 @@ class Bot(commands.Bot):
             logging.info("─" * 80)
             return
 
+        # Добавление опечаток
         final_text, typo_fix = self.add_typo(cleaned, state)
         
         if typo_fix:
@@ -1016,6 +1091,7 @@ class Bot(commands.Bot):
         logging.info(f"💬 ФИНАЛЬНЫЙ ОТВЕТ: {final_text}")
         logging.info(f"   Длина: {len(final_text)} символов")
 
+        # Отложенный ответ
         if random.random() < config.DELAYED_RESPONSE_CHANCE and not is_mentioned:
             delay = random.uniform(config.DELAYED_RESPONSE_MIN, config.DELAYED_RESPONSE_MAX)
             logging.info(f"⏰ ОТЛОЖЕННЫЙ ОТВЕТ: через {delay:.0f} секунд")
@@ -1036,6 +1112,7 @@ class Bot(commands.Bot):
 
         database.update_user_relationship(channel_name, author, is_positive=True)
 
+        # Отправка исправления опечатки
         if state.pending_typo_fix:
             await asyncio.sleep(random.uniform(2, 5))
             await message.channel.send(state.pending_typo_fix)
