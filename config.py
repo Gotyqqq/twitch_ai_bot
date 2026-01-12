@@ -20,177 +20,108 @@ AI_MODEL = MODEL_NAME  # Alias for consistency
 # ====================================================================
 
 # --- ДЛИНА СООБЩЕНИЙ ---
-# Максимальная длина обычного ответа (символы)
-MAX_RESPONSE_LENGTH = 200  # Уменьшено с 350 для более кратких ответов
-
-# Максимальная длина при упоминании бота (символы)
-MAX_RESPONSE_LENGTH_MENTIONED = 700  # Новый параметр: длиннее при @теге
-
-# Лимит Twitch на одно сообщение (не менять)
+MAX_RESPONSE_LENGTH = 200
+MAX_RESPONSE_LENGTH_MENTIONED = 700
 MESSAGE_MAX_LENGTH = 450
 
 # --- ЧАСТОТА ОТВЕТОВ БОТА ---
-# Минимальное время между автоматическими ответами (секунды)
-# Чем больше значение, тем реже бот пишет сам
-MIN_RESPONSE_COOLDOWN = 120  # Увеличено с 60 до 120 секунд (2 минуты)
-
-# Максимальное время между автоматическими ответами (секунды)
-# Бот может ответить в случайный момент между MIN и MAX
-MAX_RESPONSE_COOLDOWN = 300  # 5 минут
-
-# Минимальная активность чата для ответа бота (сообщений)
-# Бот ответит только если после последнего его сообщения было N сообщений
-MIN_MESSAGES_BEFORE_RESPONSE = 8  # Бот ответит только после 8+ сообщений других
-
-# Вероятность ответа бота на сообщение (0.0 - 1.0)
-# 0.15 = 15% шанс ответить, если прошли кулдауны
-RESPONSE_PROBABILITY = 0.2  # 20% шанс
+MIN_RESPONSE_COOLDOWN = 120
+MAX_RESPONSE_COOLDOWN = 300
+MIN_MESSAGES_BEFORE_RESPONSE = 8
+RESPONSE_PROBABILITY = 0.2
 
 # --- "УСТАЛОСТЬ" БОТА ---
-# При какой активности (сообщений/минуту) бот начинает "уставать"
-CHAT_HIGH_ACTIVITY_THRESHOLD = 50  # Если больше 50 сообщений в минуту
-
-# Множитель для кулдаунов при усталости
-FATIGUE_COOLDOWN_MULTIPLIER = 1.5  # Кулдауны x1.5 при активном чате
-
-# Шанс сократить ответ при усталости (0.0 - 1.0)
-FATIGUE_SHORT_RESPONSE_CHANCE = 0.7  # 70% шанс ответить односложно
+CHAT_HIGH_ACTIVITY_THRESHOLD = 50
+FATIGUE_COOLDOWN_MULTIPLIER = 1.5
+FATIGUE_SHORT_RESPONSE_CHANCE = 0.7
 
 # --- ЭНЕРГЕТИЧЕСКИЕ ЦИКЛЫ ---
-# Энергия по времени суток (0-100)
-ENERGY_NIGHT = 20       # 0-6 часов
-ENERGY_MORNING = 50     # 7-9 часов
-ENERGY_DAY = 80         # 10-14 часов
-ENERGY_AFTERNOON = 70   # 15-17 часов
-ENERGY_EVENING = 90     # 18-22 часов
-ENERGY_LATE = 40        # 23 часа
-
-# Усталость от сообщений
-ENERGY_DRAIN_PER_30_MESSAGES = 10   # Каждые 30 сообщений -10 энергии
-ENERGY_DRAIN_PER_60_MESSAGES = 20   # Каждые 60 сообщений -20 энергии
-ENERGY_RESTORE_AFTER_SILENCE = 30   # +30 энергии после 10+ минут молчания
-ENERGY_MIN = 10  # Минимальная энергия
-ENERGY_MAX = 100  # Максимальная энергия
+ENERGY_NIGHT = 20
+ENERGY_MORNING = 50
+ENERGY_DAY = 80
+ENERGY_AFTERNOON = 70
+ENERGY_EVENING = 90
+ENERGY_LATE = 40
+ENERGY_DRAIN_PER_30_MESSAGES = 10
+ENERGY_DRAIN_PER_60_MESSAGES = 20
+ENERGY_RESTORE_AFTER_SILENCE = 30
+ENERGY_MIN = 10
+ENERGY_MAX = 100
 
 # --- РЕЖИМ ЗАНЯТОСТИ ---
-# Минимальная длительность "занята" (секунды)
-BUSY_MIN_DURATION = 600   # 10 минут
-# Максимальная длительность "занята" (секунды)
-BUSY_MAX_DURATION = 1800  # 30 минут
-# Шанс войти в режим занятости после очередного ответа (0.0 - 1.0)
-BUSY_PROBABILITY = 0.08  # 8% шанс "занята" после ответа
-# Вероятность ответа в режиме занятости (0.0 - 1.0)
-BUSY_RESPONSE_CHANCE = 0.2  # 20% шанс ответить когда занята
-# Короткие ответы при занятости
+BUSY_MIN_DURATION = 600
+BUSY_MAX_DURATION = 1800
+BUSY_PROBABILITY = 0.08
+BUSY_RESPONSE_CHANCE = 0.2
 BUSY_SHORT_RESPONSES = ["сек", "щас", "минутку", "занята", "отошла", "позже отвечу"]
+BUSY_MODE_CHANCE = BUSY_PROBABILITY  # Алиас
+BUSY_MODE_MIN_DURATION = BUSY_MIN_DURATION  # Алиас
+BUSY_MODE_MAX_DURATION = BUSY_MAX_DURATION  # Алиас
 
-# Старые параметры АФК (оставлены для совместимости)
 AFK_MIN_DURATION = BUSY_MIN_DURATION
 AFK_MAX_DURATION = BUSY_MAX_DURATION
 AFK_PROBABILITY = BUSY_PROBABILITY
 
 # --- НАСТРОЕНИЕ БОТА (0-100) ---
-# Начальное настроение
-INITIAL_MOOD = 60  # Нейтрально-позитивное
-
-# Изменение настроения от позитивного сообщения
+INITIAL_MOOD = 60
 MOOD_INCREASE_POSITIVE = 3
-# Изменение настроения от негативного сообщения
 MOOD_DECREASE_NEGATIVE = 5
-# Изменение настроения при игноре (никто не отвечает)
 MOOD_DECREASE_IGNORED = 2
-
-# Коэффициенты эмоциональной инерции
-MOOD_INERTIA_NORMAL = 0.85    # Обычное затухание (15% изменение)
-MOOD_INERTIA_NEGATIVE = 0.92  # Медленное восстановление от негатива (8% изменение)
-MOOD_INERTIA_POSITIVE = 0.80  # Быстрое улучшение (20% изменение)
-
-# Минимальное и максимальное значение настроения
+MOOD_INERTIA_NORMAL = 0.85
+MOOD_INERTIA_NEGATIVE = 0.92
+MOOD_INERTIA_POSITIVE = 0.80
 MOOD_MIN = 20
 MOOD_MAX = 100
 
 # --- ЧЕЛОВЕЧЕСКИЕ ПАТТЕРНЫ ---
-# Вероятность опечатки в сообщении (0.0 - 1.0)
-TYPO_PROBABILITY = 0.08  # Увеличено с 3% до 8%
-# Вероятность исправить опечатку отдельным сообщением
-TYPO_FIX_PROBABILITY = 0.3  # 30% шанс исправить
-
-# Вероятность разбить сообщение на две части (0.0 - 1.0)
-SPLIT_MESSAGE_PROBABILITY = 0.05  # 5% шанс
-
-# Вероятность использовать междометия (0.0 - 1.0)
-INTERJECTION_PROBABILITY = 0.3  # 30% шанс
-
-# Вероятность отложить ответ (даже если решено ответить)
-DELAYED_RESPONSE_PROBABILITY = 0.25  # 25% шанс
-# Минимальная и максимальная задержка для отложенного ответа
-DELAYED_RESPONSE_MIN = 20    # 20 секунд
-DELAYED_RESPONSE_MAX = 180   # 3 минуты
+TYPO_PROBABILITY = 0.08
+TYPO_FIX_PROBABILITY = 0.3
+SPLIT_MESSAGE_PROBABILITY = 0.05
+INTERJECTION_PROBABILITY = 0.3
+DELAYED_RESPONSE_CHANCE = 0.25
+DELAYED_RESPONSE_PROBABILITY = DELAYED_RESPONSE_CHANCE  # Алиас
+DELAYED_RESPONSE_MIN = 20
+DELAYED_RESPONSE_MAX = 180
 
 # --- КОНТЕКСТ И ПАМЯТЬ ---
-# Количество последних сообщений для контекста
-CONTEXT_MESSAGE_LIMIT = 10  # Увеличено для лучшего понимания
-
-# Количество фактов о пользователях для хранения
-MAX_USER_FACTS = 50  # Максимум фактов в памяти
-
-# Вероятность вспомнить факт о пользователе (0.0 - 1.0)
-RECALL_USER_FACT_PROBABILITY = 0.15  # 15% шанс упомянуть факт
-
-# Количество последних тем для отслеживания
-TOPIC_MEMORY_SIZE = 5  # Помним 5 последних тем
+CONTEXT_MESSAGE_LIMIT = 10
+CONTEXT_SIZE = CONTEXT_MESSAGE_LIMIT  # Алиас
+MAX_USER_FACTS = 50
+RECALL_USER_FACT_PROBABILITY = 0.15
+TOPIC_MEMORY_SIZE = 5
 
 # --- ИНДИВИДУАЛЬНЫЕ ОТНОШЕНИЯ ---
-# Пороги для изменения статуса отношений
-RELATIONSHIP_ACQUAINTANCE_THRESHOLD = 10   # 10 позитивных взаимодействий
-RELATIONSHIP_FRIEND_THRESHOLD = 30         # 30 позитивных взаимодействий  
-RELATIONSHIP_FAVORITE_THRESHOLD = 50       # 50 позитивных взаимодействий
-RELATIONSHIP_TOXIC_THRESHOLD = 5           # 5 негативных взаимодействий
-
-# Модификаторы вероятности ответа в зависимости от отношений
-RELATIONSHIP_STRANGER_MODIFIER = 0.0       # Без изменений
-RELATIONSHIP_ACQUAINTANCE_MODIFIER = 0.1   # +10% шанс
-RELATIONSHIP_FRIEND_MODIFIER = 0.2         # +20% шанс
-RELATIONSHIP_FAVORITE_MODIFIER = 0.3       # +30% шанс
-RELATIONSHIP_TOXIC_MODIFIER = -0.3         # -30% шанс
+RELATIONSHIP_ACQUAINTANCE_THRESHOLD = 10
+RELATIONSHIP_FRIEND_THRESHOLD = 30
+RELATIONSHIP_FAVORITE_THRESHOLD = 50
+RELATIONSHIP_TOXIC_THRESHOLD = 5
+RELATIONSHIP_STRANGER_MODIFIER = 0.0
+RELATIONSHIP_ACQUAINTANCE_MODIFIER = 0.1
+RELATIONSHIP_FRIEND_MODIFIER = 0.2
+RELATIONSHIP_FAVORITE_MODIFIER = 0.3
+RELATIONSHIP_TOXIC_MODIFIER = -0.3
 
 # --- СМАЙЛИКИ ---
-# Загружать ли смайлы с 7TV
 FETCH_7TV_EMOTES = True
-
-# Размер "помойки" для смайликов (не использовать повторно N последних)
-EMOTE_COOLDOWN_SIZE = 15  # Увеличено с 8
-
-# Вероятность добавить смайлик в конец (0.0 - 1.0)
-EMOTE_ADD_PROBABILITY = 0.4  # 40% шанс
+EMOTE_COOLDOWN_SIZE = 15
+EMOTE_ADD_PROBABILITY = 0.4
 
 # --- АНТИ-ТИШИНА ---
-# Через сколько секунд тишины бот напишет сам
-SILENCE_THRESHOLD = 10000  # ~2.7 часа
-
-# Минимальный перерыв между сообщениями от тишины
-BOT_SILENCE_COOLDOWN = 28800  # 8 часов
+SILENCE_THRESHOLD = 10000
+BOT_SILENCE_COOLDOWN = 28800
 
 # --- ИМИТАЦИЯ ПЕЧАТИ ---
-# Базовая скорость печати (слов в минуту)
-WPM_MIN = 150      # Медленная печать
-WPM_NORMAL = 220   # Обычная печать
-WPM_FAST = 280     # Быстрая печать
-
-# Задержка "на размышление" перед началом печати
-THINKING_DELAY_MIN = 0.5   # Минимальная задержка
-THINKING_DELAY_MAX = 3.0   # Максимальная задержка
-THINKING_DELAY_QUESTION = 2.0  # Дополнительная задержка для вопросов
-THINKING_DELAY_LONG = 1.5      # Дополнительная задержка для длинных сообщений
-
-# Задержки внутри печати (на знаках препинания)
-PAUSE_COMMA = 0.2    # Пауза на запятой
-PAUSE_PERIOD = 0.4   # Пауза на точке
-PAUSE_QUESTION = 0.5 # Пауза на вопросительном знаке
-
-# Минимальная задержка перед ответом (секунды) - для совместимости
+WPM_MIN = 150
+WPM_NORMAL = 220
+WPM_FAST = 280
+THINKING_DELAY_MIN = 0.5
+THINKING_DELAY_MAX = 3.0
+THINKING_DELAY_QUESTION = 2.0
+THINKING_DELAY_LONG = 1.5
+PAUSE_COMMA = 0.2
+PAUSE_PERIOD = 0.4
+PAUSE_QUESTION = 0.5
 MIN_TYPING_DELAY = 1.5
-# Максимальная задержка перед ответом (секунды) - для совместимости
 MAX_TYPING_DELAY = 4.0
 
 # ====================================================================
@@ -199,18 +130,16 @@ MAX_TYPING_DELAY = 4.0
 RETRY_MAX_ATTEMPTS = 3
 RETRY_BASE_DELAY = 4
 
-# Фильтр запрещенных слов
+MASS_REACTION_THRESHOLD = 3  # Минимум 3 одинаковых эмодзи для массовой реакции
+
 FORBIDDEN_WORDS = [
     "пидр", "пидор", "пидарас", "пидорас", "педик", "гомик",
     "нигер", "ниггер", "негр", "нига", "nigger", "nigga", "niger",
     "хохол", "хач", "жид", "москаль", "ватник", "даун", "аутист"
 ]
 
-# Позитивные/негативные индикаторы для настроения
 POSITIVE_INDICATORS = ['lul', 'lol', 'kek', 'pog', 'nice', 'good', 'хорошо', 'круто', 'топ', 'класс', 'ахах', 'хах']
 NEGATIVE_INDICATORS = ['плохо', 'бред', 'отстой', 'sad', 'monkas', 'weird', 'zzz', 'boring', 'скучно', 'грустно']
-
-INTERJECTIONS = ['эм', 'хмм', 'типа', 'короче']
 
 INTERJECTIONS = ['ну', 'эм', 'хмм', 'типа', 'короче', 'кстати', 'вот', 'так']
 
@@ -229,7 +158,6 @@ TYPO_MAP = {
     'к': ['у', 'л'],
 }
 
-# Словарь типичных опечаток и сокращений
 TYPO_REPLACEMENTS = {
     "привет": ["превет", "прив", "приветт", "привт"],
     "что-то": ["чёт", "чота", "чет"],
@@ -263,13 +191,11 @@ TYPO_REPLACEMENTS = {
     "слышал": ["слышал", "слышол"],
 }
 
-# Ключевые слова для определения смены темы
 TOPIC_CHANGE_KEYWORDS = [
     "кстати", "а вот", "слушай", "вопрос", "тема", "другое",
     "забыл сказать", "еще", "ещё", "а ты", "расскажи", "что думаешь"
 ]
 
-# Keyword-триггеры для быстрых реакций (без AI)
 KEYWORD_TRIGGERS = {
     # Еда
     "пицца": ["хочу пиццу!", "ммм пицца", "теперь я тоже голодная"],
@@ -376,7 +302,3 @@ FACT_EXTRACTION_PATTERNS = [
     (r'я живу в (.+)', 1),
     (r'я из (.+)', 1),
 ]
-
-# ====================================================================
-# ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ
-# ====================================================================
