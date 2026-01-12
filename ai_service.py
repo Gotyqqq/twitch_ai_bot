@@ -87,7 +87,9 @@ async def generate_response(
     chat_phrases: list[str] = None,
     hot_topics: list[str] = None,
     user_facts: list[str] = None,
-    mood_state: str = None
+    mood_state: str = None,
+    energy_level: int = 80,
+    relationship_level: str = 'stranger'
 ) -> str | None:
     """
     Генерирует ответ через очередь запросов.
@@ -97,6 +99,8 @@ async def generate_response(
     hot_topics: горячие темы чата за последние минуты
     user_facts: факты о текущем пользователе
     mood_state: текущее эмоциональное состояние бота
+    energy_level: текущий уровень энергии бота (0-100)
+    relationship_level: уровень отношений с пользователем
     """
     async with request_lock:
         # Выбираем лимит символов в зависимости от упоминания
@@ -116,6 +120,30 @@ async def generate_response(
         
         if mood_state:
             enhanced_prompt += f"\n\nТвое настроение: {mood_state}"
+        
+        if energy_level < 30:
+            enhanced_prompt += "\n\nТы очень устала, отвечай МАКСИМАЛЬНО кратко. Можешь не отвечать на всё."
+        elif energy_level < 50:
+            enhanced_prompt += "\n\nТы немного устала, пиши коротко."
+        
+        if relationship_level == 'favorite':
+            enhanced_prompt += "\n\nЭто твой хороший друг, будь особенно дружелюбной."
+        elif relationship_level == 'friend':
+            enhanced_prompt += "\n\nВы уже знакомы, можно быть более открытой."
+        elif relationship_level == 'toxic':
+            enhanced_prompt += "\n\nЭтот человек был токсичен, отвечай холодно и кратко."
+        
+        enhanced_prompt += """
+
+Ты можешь:
+- Иногда не совсем понять вопрос: "чего?", "не поняла", "а?"
+- Уйти немного от темы
+- Ответить не на весь вопрос
+- Задать вопрос не по теме: "кстати, а ты в какие игры играешь?"
+- Написать что-то случайное между делом: "голодная", "хочу спать"
+- Забыть, о чём говорили
+
+Ты НЕ идеальный собеседник, ты живой человек."""
         
         contents = build_contents(enhanced_prompt, context_messages, current_message, bot_nick, is_mentioned)
         
