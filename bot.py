@@ -45,15 +45,17 @@ SYSTEM_PROMPT = f"""Ты {config.TWITCH_NICK}, 19 лет, обычная дев�
 Характер: дружелюбная, с юмором, любишь пообщаться.
 
 Стиль:
-- Пиши ОЧЕНЬ кратко: 1-2 предложения максимум
-- Можешь ответить односложно: "да", "нет", "ага", "хз"
-- Используй: "ну", "типа", "кстати", "вот", "так"
+- Пиши естественно и по делу
+- Длина зависит от ситуации: можно односложно ("да", "ага", "хз"), можно 2-3 предложения
+- Используй вводные слова ("ну", "типа", "кстати", "вот") РЕДКО - только когда они действительно уместны
+- НЕ начинай КАЖДОЕ сообщение с "ну", "кстати", "вот" - это неестественно
 - Женский род: "видела", "думала", "хотела"
+- Будь прямой: отвечай на вопрос, а не рассказывай о себе
 - Легкий сарказм ок
 
 На "ты бот?" - отшучивайся.
 
-СМАЙЛЫ: только из списка ниже, 1 штука в конце (не обязательно).
+СМАЙЛЫ: используй разные смайлики, не повторяй один и тот же постоянно. Можешь не использовать вообще.
 БЕЗ: Unicode эмодзи 😀, оскорблений.
 
 ЛИМИТ: {{limit}} символов максимум!"""
@@ -65,6 +67,7 @@ TRANSLIT_MAP = {
 }
 LAYOUT_CHARS = set(TRANSLIT_MAP.keys())
 
+URL_PATTERN = re.compile(r'https?://[^\s]+|www\.[^\s]+')
 
 class ChannelState:
     def __init__(self, channel_name: str):
@@ -133,20 +136,37 @@ class Bot(commands.Bot):
     def smart_transliterate(self, text: str, state: ChannelState) -> str:
         """
         Транслитерирует только явно русские слова в английской раскладке.
-        НЕ трогает смайлики, никнеймы и английские слова.
+        НЕ трогает смайлики, никнеймы, ссылки и английские слова.
         """
         words = text.split()
         result = []
         
         for word in words:
-            # Пропускаем упоминания, смайлики и короткие слова
-            if (word.startswith('@') or 
-                word in state.all_known_emotes or 
-                len(word) <= 2):
+            # Пропускаем упоминания (@username)
+            if word.startswith('@'):
                 result.append(word)
                 continue
             
-            word_lower = word.lower()
+            # Пропускаем ссылки
+            if URL_PATTERN.match(word):
+                result.append(word)
+                continue
+            
+            # Пропускаем известные смайлики
+            if word in state.all_known_emotes:
+                result.append(word)
+                continue
+            
+            # Пропускаем короткие слова (вероятно смайлики или акронимы)
+            if len(word) <= 2:
+                result.append(word)
+                continue
+            
+            # Отделяем знаки препинания
+            stripped_word = word.rstrip('.,!?;:')
+            punctuation = word[len(stripped_word):]
+            
+            word_lower = stripped_word.lower()
             alpha_chars = [c for c in word_lower if c.isalpha()]
             
             if not alpha_chars:
@@ -155,17 +175,33 @@ class Bot(commands.Bot):
             
             layout_chars_count = sum(1 for c in alpha_chars if c in LAYOUT_CHARS)
             
-            # Транслитерируем только если 90%+ символов из русской раскладки
+            # Транслитерируем только если 80%+ символов из русской раскладки
             # И слово достаточно длинное (3+ символа)
-            if len(alpha_chars) >= 3 and layout_chars_count / len(alpha_chars) >= 0.9:
-                # Дополнительная проверка: не является ли это английским словом
+            if len(alpha_chars) >= 3 and layout_chars_count / len(alpha_chars) >= 0.8:
+                # Дополнительная проверка: не является ли это известным английским словом или смайликом
                 # Проверяем наличие типичных английских сочетаний
-                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh']
+                english_patterns = ['ck', 'th', 'sh', 'ch', 'wh', 'ph', 'gh', 'kappa', 'pog', 'lul', 'omeg']
                 is_likely_english = any(pattern in word_lower for pattern in english_patterns)
                 
-                if not is_likely_english:
-                    translated = "".join(TRANSLIT_MAP.get(c.lower(), c) for c in word)
-                    result.append(translated)
+                # Проверяем, похоже ли на смайлик (CamelCase или UPPERCASE)
+                is_likely_emote = (
+                    stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:]) or
+                    stripped_word.isupper()
+                )
+                
+                if not is_likely_english and not is_likely_emote:
+                    # Сохраняем регистр первой буквы
+                    translated = ""
+                    for i, c in enumerate(stripped_word):
+                        if c.lower() in TRANSLIT_MAP:
+                            translated_char = TRANSLIT_MAP[c.lower()]
+                            # Сохраняем верхний регистр если был
+                            if c.isupper():
+                                translated_char = translated_char.upper()
+                            translated += translated_char
+                        else:
+                            translated += c
+                    result.append(translated + punctuation)
                 else:
                     result.append(word)
             else:
@@ -173,56 +209,93 @@ class Bot(commands.Bot):
         
         return " ".join(result)
 
-    def translate_layout(self, text: str) -> str:
+    def translate_layout(self, text: str, state: ChannelState) -> str:
         """
         Переводит текст с неправильной раскладки клавиатуры.
-        Определяет, какая раскладка используется, и переводит на правильную.
+        НЕ трогает смайлики, теги и ссылки.
         """
-        # Подсчитываем символы из разных раскладок
-        en_chars = sum(1 for c in text if c in config.EN_TO_RU_LAYOUT)
-        ru_chars = sum(1 for c in text if c in config.RU_TO_EN_LAYOUT)
+        words = text.split()
+        result_words = []
         
-        # Если символов мало, не переводим
-        if en_chars + ru_chars < 3:
-            return text
-        
-        # Определяем, какая раскладка преобладает
-        if en_chars > ru_chars * 2:
-            # Вероятно написано на английской вместо русской
-            result = []
-            for char in text:
-                if char in config.EN_TO_RU_LAYOUT:
-                    result.append(config.EN_TO_RU_LAYOUT[char])
-                else:
-                    result.append(char)
-            translated = ''.join(result)
+        for word in words:
+            # Защищаем упоминания
+            if word.startswith('@'):
+                result_words.append(word)
+                continue
             
-            # Проверяем, получилось ли что-то осмысленное
-            # Если больше 50% русских букв после перевода - используем перевод
-            ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я')
-            if ru_letters > len(translated) * 0.4:
-                logging.info(f"   🔤 Исправлена раскладка: '{text}' -> '{translated}'")
-                return translated
-        
-        elif ru_chars > en_chars * 2:
-            # Вероятно написано на русской вместо английской
-            result = []
-            for char in text:
-                if char in config.RU_TO_EN_LAYOUT:
-                    result.append(config.RU_TO_EN_LAYOUT[char])
-                else:
-                    result.append(char)
-            translated = ''.join(result)
+            # Защищаем ссылки
+            if URL_PATTERN.match(word):
+                result_words.append(word)
+                continue
             
-            # Проверяем, получилось ли что-то осмысленное
-            # Если больше 50% английских букв после перевода - используем перевод
-            en_letters = sum(1 for c in translated if 'a' <= c.lower() <= 'z')
-            if en_letters > len(translated) * 0.4:
-                logging.info(f"   🔤 Исправлена раскладка: '{text}' -> '{translated}'")
-                return translated
+            # Защищаем известные смайлики
+            if word in state.all_known_emotes:
+                result_words.append(word)
+                continue
+            
+            # Отделяем знаки препинания
+            stripped_word = word.rstrip('.,!?;:')
+            punctuation = word[len(stripped_word):]
+            
+            # Проверяем, похоже ли на смайлик по структуре
+            # Смайлики обычно начинаются с заглавной буквы или все заглавные
+            if len(stripped_word) > 2 and (
+                (stripped_word[0].isupper() and any(c.isupper() for c in stripped_word[1:])) or
+                stripped_word.isupper() or
+                stripped_word.lower() in ['kappa', 'pog', 'pogchamp', 'lul', 'kekw', 'omegalul', 'pepega', 'monkas']
+            ):
+                result_words.append(word)
+                continue
+            
+            # Подсчитываем символы из разных раскладок только для этого слова
+            en_chars = sum(1 for c in stripped_word if c in config.EN_TO_RU_LAYOUT)
+            ru_chars = sum(1 for c in stripped_word if c in config.RU_TO_EN_LAYOUT)
+            
+            # Если символов мало, не переводим
+            if en_chars + ru_chars < 3:
+                result_words.append(word)
+                continue
+            
+            # Определяем, какая раскладка преобладает
+            if en_chars > ru_chars * 1.5:
+                # Вероятно написано на английской вместо русской
+                translated_chars = []
+                for char in stripped_word:
+                    if char in config.EN_TO_RU_LAYOUT:
+                        translated_chars.append(config.EN_TO_RU_LAYOUT[char])
+                    else:
+                        translated_chars.append(char)
+                translated = ''.join(translated_chars)
+                
+                # Проверяем, получилось ли что-то осмысленное
+                ru_letters = sum(1 for c in translated if 'а' <= c.lower() <= 'я' or c == 'ё')
+                if ru_letters > len(translated) * 0.5:
+                    logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
+                    result_words.append(translated + punctuation)
+                else:
+                    result_words.append(word)
+            elif ru_chars > en_chars * 1.5:
+                # Вероятно написано на русской вместо английской
+                translated_chars = []
+                for char in stripped_word:
+                    if char in config.RU_TO_EN_LAYOUT:
+                        translated_chars.append(config.RU_TO_EN_LAYOUT[char])
+                    else:
+                        translated_chars.append(char)
+                translated = ''.join(translated_chars)
+                
+                # Проверяем, получилось ли что-то осмысленное
+                en_letters = sum(1 for c in translated if 'a' <= c.lower() <= 'z')
+                if en_letters > len(translated) * 0.5:
+                    logging.info(f"   🔤 Исправлена раскладка слова: '{stripped_word}' -> '{translated}'")
+                    result_words.append(translated + punctuation)
+                else:
+                    result_words.append(word)
+            else:
+                # Если ничего не подошло, возвращаем оригинал
+                result_words.append(word)
         
-        # Если ничего не подошло, возвращаем оригинал
-        return text
+        return " ".join(result_words)
 
 
     def clean_response(self, text: str, state: ChannelState) -> str:
@@ -235,14 +308,13 @@ class Bot(commands.Bot):
 
         text = text.strip().strip('"\'')
 
-        # Только если они стоят в самом начале и не к месту
-        interjections_to_remove = ['кстати', 'вот', 'ну']
-        first_word = text.split()[0].lower() if text.split() else ''
-        
-        # Убираем только если это единственное вводное слово в начале
-        if first_word in interjections_to_remove:
-            # Проверяем, что после него идет запятая или пробел
-            if len(text.split()) > 1:
+        # Убираем вводные слова только если они явно лишние в начале
+        # И только с вероятностью 50%
+        if random.random() < 0.5:
+            interjections_to_remove = ['кстати', 'вот', 'ну']
+            first_word = text.split()[0].lower() if text.split() else ''
+            
+            if first_word in interjections_to_remove and len(text.split()) > 2:
                 # Убираем первое слово и запятую после него если есть
                 text = re.sub(r'^(кстати|вот|ну),?\s+', '', text, flags=re.IGNORECASE)
 
@@ -268,7 +340,6 @@ class Bot(commands.Bot):
             pass
         elif result and result[0].isupper() and len(result) > 1:
             # Проверяем, это действительно начало предложения или просто неправильная капитализация
-            # Если это короткое междометие с большой буквы - делаем маленькой
             first_word = result.split()[0]
             if len(first_word) <= 5 and first_word.lower() in ['чего', 'хз', 'ага', 'неа', 'да', 'нет', 'ну', 'вот']:
                 result = result[0].lower() + result[1:]
@@ -276,7 +347,7 @@ class Bot(commands.Bot):
         return result
 
     def add_emote_to_response(self, text: str, state: ChannelState) -> str:
-        """Добавляет подходящий смайл с соблюдением кулдауна."""
+        """Добавляет подходящий смайл с соблюдением кулдауна и разнообразием."""
         words = text.split()
 
         # Если в конце уже есть смайлик, ничего не добавляем
@@ -287,6 +358,7 @@ class Bot(commands.Bot):
         if random.random() > config.EMOTE_ADD_PROBABILITY:
             return text
 
+        # Сначала пытаемся использовать популярные смайлики, которые не в кулдауне
         available = [e for e in state.popular_emotes if e not in state.used_emotes]
         
         if not available:
@@ -294,12 +366,28 @@ class Bot(commands.Bot):
             available = [e for e in state.all_known_emotes if e not in state.used_emotes]
         
         if not available:
-            # Если совсем ничего нет, обнуляем помойку и берем из популярных
-            state.used_emotes.clear()
-            available = state.popular_emotes[:10] if state.popular_emotes else state.standard_emotes
+            # Если совсем ничего нет, берем случайный из популярных (игнорируя кулдаун)
+            # Но предпочитаем те, что использовались давно
+            if len(state.used_emotes) >= config.EMOTE_COOLDOWN_SIZE // 2:
+                # Очищаем половину кулдауна, чтобы освежить
+                for _ in range(config.EMOTE_COOLDOWN_SIZE // 4):
+                    if state.used_emotes:
+                        state.used_emotes.popleft()
+            
+            available = [e for e in state.popular_emotes if e]
+            if not available:
+                available = state.standard_emotes
 
         if available:
-            emote = random.choice(available)
+            # Взвешенный случайный выбор: предпочитаем смайлики из начала списка популярных
+            # но с некоторой случайностью
+            if len(available) > 5 and random.random() < 0.7:
+                # 70% времени выбираем из топ-5
+                emote = random.choice(available[:5])
+            else:
+                # 30% времени выбираем из всех доступных
+                emote = random.choice(available)
+            
             state.used_emotes.append(emote)
             return f"{text} {emote}"
 
@@ -777,13 +865,16 @@ class Bot(commands.Bot):
             return
 
         original_content = message.content
-        corrected_content = self.translate_layout(original_content)
+        corrected_content = self.translate_layout(original_content, state)
+        
         if corrected_content != original_content:
             logging.info(f"   🔤 Раскладка исправлена: '{original_content}' -> '{corrected_content}'")
             content = corrected_content
         else:
+            # Если translate_layout ничего не изменил, пробуем smart_transliterate
             content = self.smart_transliterate(original_content, state)
-
+            if content != original_content:
+                logging.info(f"   🔤 Транслитерация: '{original_content}' -> '{content}'")
 
         if self.is_toxic(content):
             logging.warning(f"[{channel_name}] Токсичное сообщение от {message.author.name} скрыто")
