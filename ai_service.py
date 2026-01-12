@@ -25,8 +25,8 @@ def is_context_relevant(current_msg: str, context_messages: list[dict], bot_nick
     if f"@{bot_nick.lower()}" in current_lower:
         for keyword in config.TOPIC_CHANGE_KEYWORDS:
             if keyword in current_lower:
-                return context_messages[-3:]  # Увеличено для смены темы
-        return context_messages[-6:]  # Увеличено для лучшего понимания
+                return context_messages[-3:]
+        return context_messages[-6:]
 
     current_words = set(
         w for w in current_lower.split()
@@ -93,14 +93,6 @@ async def generate_response(
 ) -> str | None:
     """
     Генерирует ответ через очередь запросов.
-    
-    is_mentioned: True если бота упомянули @тегом (разрешает более длинный ответ)
-    chat_phrases: частые фразы из чата для копирования стиля
-    hot_topics: горячие темы чата за последние минуты
-    user_facts: факты о текущем пользователе
-    mood_state: текущее эмоциональное состояние бота
-    energy_level: текущий уровень энергии бота (0-100)
-    relationship_level: уровень отношений с пользователем
     """
     async with request_lock:
         # Выбираем лимит символов в зависимости от упоминания
@@ -109,8 +101,8 @@ async def generate_response(
         enhanced_prompt = system_prompt
         
         if chat_phrases and len(chat_phrases) > 0:
-            phrases_sample = chat_phrases[:5]  # Берем 5 самых частых
-            enhanced_prompt += f"\n\nПопулярные фразы в этом чате (используй иногда похожий стиль): {', '.join(phrases_sample)}"
+            phrases_sample = chat_phrases[:5]
+            enhanced_prompt += f"\n\nПопулярные фразы в этом чате (можешь использовать похожий стиль): {', '.join(phrases_sample)}"
         
         if hot_topics and len(hot_topics) > 0:
             enhanced_prompt += f"\n\nГорячие темы сейчас: {', '.join(hot_topics)}"
@@ -122,28 +114,39 @@ async def generate_response(
             enhanced_prompt += f"\n\nТвое настроение: {mood_state}"
         
         if energy_level < 30:
-            enhanced_prompt += "\n\nТы очень устала, отвечай МАКСИМАЛЬНО кратко. Можешь не отвечать на всё."
+            enhanced_prompt += "\n\nТы очень устала, отвечай МАКСИМАЛЬНО кратко (3-5 слов). Можешь не отвечать на всё."
         elif energy_level < 50:
-            enhanced_prompt += "\n\nТы немного устала, пиши коротко."
+            enhanced_prompt += "\n\nТы немного устала, пиши коротко (1-2 предложения)."
         
         if relationship_level == 'favorite':
             enhanced_prompt += "\n\nЭто твой хороший друг, будь особенно дружелюбной."
         elif relationship_level == 'friend':
             enhanced_prompt += "\n\nВы уже знакомы, можно быть более открытой."
         elif relationship_level == 'toxic':
-            enhanced_prompt += "\n\nЭтот человек был токсичен, отвечай холодно и кратко."
+            enhanced_prompt += "\n\nЭтот человек был токсичен, отвечай холодно и ОЧЕНЬ кратко."
         
         enhanced_prompt += """
 
-Ты можешь:
-- Иногда не совсем понять вопрос: "чего?", "не поняла", "а?"
-- Уйти немного от темы
-- Ответить не на весь вопрос
-- Задать вопрос не по теме: "кстати, а ты в какие игры играешь?"
-- Написать что-то случайное между делом: "голодная", "хочу спать"
-- Забыть, о чём говорили
+ВАЖНО: 
+- Отвечай ТОЛЬКО на заданный вопрос/сообщение
+- НЕ задавай вопросы не по теме ("а ты в какие игры играешь?", "что делаешь?" и т.д.)
+- Если тебе задали конкретный вопрос, отвечай только на него
+- Можешь задать уточняющий вопрос ТОЛЬКО если что-то непонятно в текущей теме
+- Пиши с маленькой буквы (если это не начало после точки)
 
-Ты НЕ идеальный собеседник, ты живой человек."""
+Ты можешь:
+- Не совсем понять: "чего?", "не поняла", "а?"
+- Ответить кратко: "хз", "ну вот", "так и есть"
+- Добавить свое мнение по текущей теме
+- Согласиться или не согласиться
+- Пошутить или посаркастить ПО ТЕМЕ разговора
+
+Ты НЕ можешь:
+- Задавать вопросы не по теме
+- Переводить разговор на другую тему без причины
+- Писать лишние вводные слова ("кстати", "вот") в начале КАЖДОГО сообщения
+
+Ты живой человек, который отвечает на вопросы, а не ведущий ток-шоу."""
         
         contents = build_contents(enhanced_prompt, context_messages, current_message, bot_nick, is_mentioned)
         
