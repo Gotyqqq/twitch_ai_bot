@@ -758,7 +758,7 @@ class Bot(commands.Bot):
             current_message=f"{author}: {content}",
             bot_nick=self.nick,
             is_mentioned=is_mentioned,
-            user_memory=user_facts,
+            user_facts=user_facts,  # Changed from user_memory to user_facts
             chat_phrases=state.chat_phrases,
             energy_level=int(state.energy)
         )
