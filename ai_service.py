@@ -1,22 +1,67 @@
 # ai_service.py - ГИБРИДНАЯ СИСТЕМА: Google Gemma для анализа + Mistral для генерации
+# С обработкой ошибок для missing зависимостей
 
 import logging
 import asyncio
 import config
-from mistralai import Mistral
 from typing import Optional
 import time
 import json
 
-# Mistral клиент для генерации ответов (используем более мощную модель)
-mistral_client = Mistral(api_key=config.MISTRAL_API_KEY)
+logging.basicConfig(level=logging.INFO)
 
-# Google AI Studio (Gemma-3-27B через Google Generative AI)
-import google.generativeai as genai
-genai.configure(api_key=config.GOOGLE_AI_KEY)
-gemma_model = genai.GenerativeModel("gemini-2.0-flash")
+# ============================================================================
+# ПРОВЕРКА И ЗАГРУЗКА ЗАВИСИМОСТЕЙ
+# ============================================================================
 
-# Отслеживание использования токенов
+mistral_available = False
+google_available = False
+mistral_client = None
+gemma_model = None
+
+try:
+    from mistralai import Mistral
+    mistral_available = True
+    mistral_client = Mistral(api_key=config.MISTRAL_API_KEY)
+    logging.info("✅ Mistral загружена успешно")
+except ImportError:
+    logging.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Mistral не установлена!")
+    logging.error("   Выполни на сервере: pip install mistralai")
+except Exception as e:
+    logging.error(f"❌ Ошибка при загрузке Mistral: {e}")
+
+try:
+    import google.generativeai as genai
+    google_available = True
+    genai.configure(api_key=config.GOOGLE_AI_KEY)
+    gemma_model = genai.GenerativeModel("gemini-2.0-flash")
+    logging.info("✅ Google Generative AI загружена успешно")
+except ImportError:
+    logging.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Google Generative AI не установлена!")
+    logging.error("   Выполни на сервере: pip install google-generativeai")
+except Exception as e:
+    logging.error(f"❌ Ошибка при загрузке Google AI: {e}")
+
+# Проверка критических зависимостей
+if not mistral_available or not google_available:
+    logging.error("""
+╔════════════════════════════════════════════════════════════════╗
+║         ⚠️  ОШИБКА: Не установлены необходимые зависимости!    ║
+╠════════════════════════════════════════════════════════════════╣
+║  ВЫПОЛНИ НА СЕРВЕРЕ:                                            ║
+║                                                                  ║
+║  cd /home/twitch_ai_bot                                          ║
+║  pip install -r requirements.txt                                ║
+║                                                                  ║
+║  ИЛИ вручную:                                                    ║
+║  pip install mistralai google-generativeai                      ║
+╚════════════════════════════════════════════════════════════════╝
+    """)
+
+# ============================================================================
+# ОТСЛЕЖИВАНИЕ ТОКЕНОВ
+# ============================================================================
+
 token_usage = {
     "mistral_tokens": 0,
     "gemma_tokens": 0,
@@ -79,51 +124,9 @@ def get_token_stats():
     }
 
 
-def is_context_relevant(current_msg: str, context_messages: list, bot_nick: str) -> list:
-    """
-    Умная фильтрация контекста - только релевантные сообщения.
-    """
-    if not context_messages:
-        return []
-
-    current_lower = current_msg.lower()
-
-    if f"@{bot_nick.lower()}" in current_lower or bot_nick.lower() in current_lower:
-        for keyword in config.TOPIC_CHANGE_KEYWORDS:
-            if keyword in current_lower:
-                return context_messages[-5:]
-        return context_messages[-10:]
-
-    current_words = set(
-        w.lower()
-        for w in current_lower.split()
-        if len(w) > 3 and w.replace("?", "").replace("!", "").isalpha()
-    )
-
-    if not current_words:
-        return context_messages[-5:]
-
-    relevant = []
-
-    for msg in context_messages[-12:]:
-        msg_words = set(
-            w.lower()
-            for w in msg["content"].lower().split()
-            if len(w) > 3 and w.replace("?", "").replace("!", "").isalpha()
-        )
-
-        if msg_words:
-            overlap = len(current_words & msg_words) / len(current_words)
-            if overlap > 0.3:
-                relevant.append(msg)
-
-    if len(relevant) < 2:
-        relevant = context_messages[-6:]
-    else:
-        relevant = relevant[-8:]
-
-    return relevant
-
+# ============================================================================
+# АНАЛИЗ КОНТЕКСТА
+# ============================================================================
 
 async def analyze_context(
     context_messages: list, current_message: str, bot_nick: str
@@ -132,6 +135,17 @@ async def analyze_context(
     Анализирует контекст с помощью Google Gemma.
     Возвращает структурированный анализ для Mistral.
     """
+
+    if not google_available or gemma_model is None:
+        logging.warning("⚠️  Gemma недоступна, используем дефолтный анализ")
+        return {
+            "theme": "общий разговор",
+            "sentiment": "neutral",
+            "tone": "friendly",
+            "key_topic": current_message[:30],
+            "context_summary": "Текущее сообщение",
+            "reply_direction": "просто ответить естественно",
+        }
 
     context_text = "\n".join(
         [
@@ -177,7 +191,7 @@ async def analyze_context(
             add_token_usage(gemma_tokens=250)
             return analysis
         except json.JSONDecodeError:
-            logging.warning("⚠️ Gemma вернула невалидный JSON, используем дефолтные значения")
+            logging.warning("⚠️  Gemma вернула невалидный JSON")
             return {
                 "theme": "общий разговор",
                 "sentiment": "neutral",
@@ -191,6 +205,10 @@ async def analyze_context(
         logging.error(f"❌ Ошибка анализа контекста Gemma: {e}")
         return None
 
+
+# ============================================================================
+# ГЕНЕРАЦИЯ ОТВЕТА
+# ============================================================================
 
 async def generate_response(
     system_prompt: str,
@@ -207,10 +225,14 @@ async def generate_response(
     channel_emotes: Optional[list] = None,
 ) -> Optional[str]:
     """
-    Главная функция:
+    Главная функция генерации ответа.
     1) анализирует контекст через Google Gemma
     2) генерирует ответ через Mistral
     """
+
+    if not mistral_available or mistral_client is None:
+        logging.error("❌ Mistral недоступна, не могу генерировать ответ!")
+        return None
 
     async with request_lock:
         # 1) Анализируем контекст
@@ -276,9 +298,7 @@ async def generate_response(
             enhanced_prompt += "\n\n⚡ Я немного устала - короткие ответы"
 
         if relationship_level == "favorite":
-            enhanced_prompt += (
-                "\n\n💜 Это мой близкий друг - будь дружелюбной и открытой"
-            )
+            enhanced_prompt += "\n\n💜 Это мой близкий друг - будь дружелюбной и открытой"
         elif relationship_level == "friend":
             enhanced_prompt += "\n\n👥 Это знакомый - нормальный, дружеский тон"
         elif relationship_level == "toxic":
@@ -294,44 +314,32 @@ async def generate_response(
 - Если спросят "ты бот?" - ответь как обычная девушка
 - Ведешь себя как реальный человек
 
-2️⃣ О СЕБЕ
-- Твое имя не важно, это просто девушка 19 лет
-- Ты в чате Twitch, общаешься с людьми
-- У тебя есть свое мнение, эмоции, предпочтения
-- Ты не специалист по всему, иногда что-то не знаешь
-
-3️⃣ КАК ОТВЕЧАТЬ
+2️⃣ КАК ОТВЕЧАТЬ
 - Без упоминания: короткие ответы (1-2 предложения)
 - При упоминании: раскрывайся (2-4 предложения)
 - НЕ задавай случайные вопросы, если не спрашивают
-- Отвечай НА ТО, что спросили, а не в сторону
+- Отвечай НА ТО, что спросили
 
-4️⃣ СТИЛЬ ТВИЧ ЧАТА
-- "да", "не", "ага", "хз", "норм", "окей" - OK
-- Иногда смайлики из чата (но не переусложняй)
+3️⃣ СТИЛЬ ТВИЧ ЧАТА
+- "да", "не", "ага", "хз", "норм" - OK
+- Иногда смайлики из чата
 - Большинство ответов БЕЗ смайликов
-- Естественный, разговорный язык
+- Естественный разговорный язык
 
-5️⃣ ЛИЧНОСТЬ
-- Используй контекст выше - учитывай тон и тему
-- Не начинай каждый ответ с "ну", "кстати", "вот"
-- Вводные слова редко (10-15% ответов)
-- Сарказм и юмор - OK, но к месту
-- Иногда флирти, если подходит контекст
-
-6️⃣ НЕ ПОВТОРЯЙСЯ
-- Разные ответы на одинаковые вопросы
-- Меняй структуру и формулировки
-- Используй синонимы и варианты
+4️⃣ ЛИЧНОСТЬ
+- Не повторяйся - разные ответы на одно и то же
+- Не начинай с "ну", "кстати", "вот"
+- Сарказм и юмор - OK
+- Используй контекст выше - учитывай тон
 """
 
         # 4) Проверяем лимиты
         estimated_tokens = int(len(enhanced_prompt.split()) * 1.5) + 300
         if not can_make_request(estimated_tokens):
-            logging.warning("⚠️ Превышены лимиты токенов! Пропускаем запрос.")
+            logging.warning("⚠️  Превышены лимиты токенов!")
             return None
 
-        # 5) Генерируем ответ с Mistral (более мощная модель для качества)
+        # 5) Генерируем ответ с Mistral
         logging.info("✍️ Генерируем ответ (Mistral Large)...")
 
         try:
@@ -353,19 +361,14 @@ async def generate_response(
             answer = response.choices[0].message.content.strip()
             add_token_usage(mistral_tokens=max_tokens)
 
-            # 6) Добавляем смайлик если есть пул (вместо фиксированных смайлов)
+            # 6) Добавляем смайлик если есть пул
             if channel_emotes and len(channel_emotes) > 0:
-                # Определяем эмоцию ответа
                 emotion = _detect_response_emotion(answer)
-
-                # Выбираем подходящие смайлики из пула канала
                 suitable_emotes = _get_suitable_emotes(emotion, channel_emotes)
 
                 if suitable_emotes:
                     import random
-
                     emote = random.choice(suitable_emotes)
-                    # 40% вероятность добавить смайлик
                     if random.random() < 0.4:
                         answer = f"{answer} {emote}"
 
@@ -382,13 +385,17 @@ async def generate_response(
                 else:
                     answer = truncated.rsplit(" ", 1)[0] + "."
 
-            logging.info(f"✅ Ответ сгенерирован (Gemma анализ + Mistral Large)")
+            logging.info("✅ Ответ сгенерирован")
             return answer
 
         except Exception as e:
             logging.error(f"❌ Ошибка генерации Mistral: {e}")
             return None
 
+
+# ============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================================
 
 def _detect_response_emotion(response: str) -> str:
     """Определяет эмоцию ответа для подбора смайлика."""
@@ -416,10 +423,7 @@ def _detect_response_emotion(response: str) -> str:
 
 
 def _get_suitable_emotes(emotion: str, all_emotes: list) -> list:
-    """
-    Подбирает подходящие смайлики из пула канала по эмоции.
-    Ищет смайлики по названию/содержанию.
-    """
+    """Подбирает подходящие смайлики из пула канала по эмоции."""
     if not all_emotes:
         return []
 
@@ -439,7 +443,6 @@ def _get_suitable_emotes(emotion: str, all_emotes: list) -> list:
         if any(keyword in emote_lower for keyword in keywords):
             suitable.append(emote)
 
-    # Если ничего не нашли - возвращаем первые 3 смайлика
     if not suitable and all_emotes:
         return all_emotes[:3]
 
