@@ -447,7 +447,7 @@ class HumanTwitchBot(commands.Bot):
             
             # Отмечаем использованные смайлики
             for emote in used_emotes:
-                state.recent_emotes_used.append(emote
+                state.recent_emotes_used.append(emote)
             
             # Сохраняем в БД
             database.save_message(state.name, self.nick, response_text, is_bot=True)
