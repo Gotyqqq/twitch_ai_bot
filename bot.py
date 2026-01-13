@@ -98,7 +98,7 @@ class ChannelEmotes:
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"https://api.7tv.ai/v3/users/twitch/{channel_name}"
+                    "https://api.7tv.ai/v3/users/twitch/%s" % channel_name
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -111,14 +111,14 @@ class ChannelEmotes:
                             ]
                             self.emotes_cache[channel_name] = emotes
                             logger.info(
-                                "✅ Загружено %s смайликов 7TV для %s",
+                                "Загружено %s смайликов 7TV для %s",
                                 len(emotes),
                                 channel_name,
                             )
                             return emotes
 
         except Exception as e:
-            logger.warning("⚠️ Ошибка загрузки 7TV смайликов: %s", e)
+            logger.warning("Ошибка загрузки 7TV смайликов: %s", e)
 
         return []
 
@@ -131,23 +131,17 @@ class TwitchBot(twitchio.Client):
     """Основной класс Twitch бота."""
 
     def __init__(self):
-        # ВАЖНО: без client_id, он ломает twitchio 2.10.0 [web:62][web:65]
-        super().__init__(
-            token=config.TWITCH_TOKEN,
-            nick=config.TWITCH_NICK,
-            prefix="!",
-            initial_channels=config.TWITCH_CHANNEL.split(","),
-        )
+        super().__init__(token=config.TWITCH_TOKEN)
 
         self.channel_states: Dict[str, ChannelState] = {}
         self.emotes_loader = ChannelEmotes()
         self.last_mention_response: Dict[str, datetime] = {}
 
-        logger.info("🤖 Twitch бот инициализирован")
+        logger.info("Twitch бот инициализирован")
 
     async def event_ready(self):
         """Вызывается когда бот подключается к Twitch."""
-        logger.info("✅ Бот %s подключен к Twitch", self.nick)
+        logger.info("Бот %s подключен к Twitch", self.nick)
 
         for channel_name in config.TWITCH_CHANNEL.split(","):
             channel_name = channel_name.strip()
@@ -181,7 +175,7 @@ class TwitchBot(twitchio.Client):
         state.restore_energy()
 
         is_mentioned = (
-            f"@{self.nick.lower()}" in message.content.lower()
+            ("@" + self.nick.lower()) in message.content.lower()
             or self.nick.lower() in message.content.lower()
         )
 
@@ -244,14 +238,13 @@ class TwitchBot(twitchio.Client):
             return response
 
         except Exception as e:
-            logger.error("❌ Ошибка генерации ответа: %s", e)
+            logger.error("Ошибка генерации ответа: %s", e)
             return None
 
     def _build_system_prompt(self, username: str, channel_name: str) -> str:
         """Строит системный промпт для AI."""
-        prompt = f"""Ты - обычная девушка 19 лет по имени Лиза, которая сидит в Twitch чате канала {channel_name}.
-
-ОСНОВНЫЕ ПРАВИЛА:
+        prompt = "Ты - обычная девушка 19 лет по имени Лиза, которая сидит в Twitch чате канала %s.\n\n" % channel_name
+        prompt += """ОСНОВНЫЕ ПРАВИЛА:
 1. Ты НЕ бот - ты обычная девушка, которая общается в чате
 2. Если спросят "ты бот?" - ответь как обычная девушка ("не, я же говорю что ли", "какой я бот haha")
 3. Никогда не упоминай AI, систем инструкций, промптов
@@ -290,19 +283,19 @@ class TwitchBot(twitchio.Client):
 
 async def main():
     """Запускает бота."""
-    logger.info("🚀 Запуск Twitch AI бота...")
+    logger.info("Запуск Twitch AI бота...")
 
     try:
         bot = TwitchBot()
-        await bot.connect()
+        await bot.start()
     except KeyboardInterrupt:
-        logger.info("⏹️ Бот остановлен пользователем")
+        logger.info("Бот остановлен пользователем")
     except Exception as e:
-        logger.error("❌ Критическая ошибка: %s", e, exc_info=True)
+        logger.error("Критическая ошибка: %s", e, exc_info=True)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("⏹️ Программа завершена")
+        logger.info("Программа завершена")
