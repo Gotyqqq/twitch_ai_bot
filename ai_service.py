@@ -125,44 +125,6 @@ def is_context_relevant(current_msg: str, context_messages: list, bot_nick: str)
     return relevant
 
 
-def build_contents(system_prompt: str, context_messages: list, current_message: str, bot_nick: str, is_mentioned: bool = False) -> tuple:
-    """
-    Строит содержимое для API с оптимизацией по токенам.
-    Возвращает (contents, estimated_tokens)
-    """
-    from google.genai import types
-
-    relevant_context = is_context_relevant(current_message, context_messages, bot_nick)
-
-    contents = []
-    estimated_tokens = len(system_prompt.split()) * 1.3
-
-    contents.append(
-        types.Content(
-            role="user", parts=[types.Part.from_text(text=f"[ИНСТРУКЦИИ]: {system_prompt}")]
-        )
-    )
-    estimated_tokens += len(system_prompt.split()) * 1.3
-
-    for msg in relevant_context:
-        role = "model" if msg["is_bot"] else "user"
-
-        if msg["is_bot"]:
-            text = msg["content"]
-        else:
-            text = f"{msg['author']}: {msg['content']}"
-
-        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text)]))
-        estimated_tokens += len(text.split()) * 1.3
-
-    contents.append(
-        types.Content(role="user", parts=[types.Part.from_text(text=current_message)])
-    )
-    estimated_tokens += len(current_message.split()) * 1.3
-
-    return contents, min(int(estimated_tokens), 2000)
-
-
 async def analyze_context(
     context_messages: list, current_message: str, bot_nick: str
 ) -> Optional[dict]:
@@ -395,12 +357,13 @@ async def generate_response(
             if channel_emotes and len(channel_emotes) > 0:
                 # Определяем эмоцию ответа
                 emotion = _detect_response_emotion(answer)
-                
+
                 # Выбираем подходящие смайлики из пула канала
                 suitable_emotes = _get_suitable_emotes(emotion, channel_emotes)
-                
+
                 if suitable_emotes:
                     import random
+
                     emote = random.choice(suitable_emotes)
                     # 40% вероятность добавить смайлик
                     if random.random() < 0.4:
