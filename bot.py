@@ -1,270 +1,318 @@
 #!/usr/bin/env python3
-# bot.py - Twitch бот с гибридной AI системой (Gemma + Mistral) для TwitchIO 3.x
 
+bot.py - Основной Twitch бот с гибридной AI системой (Google Gemma + Mistral)
 import logging
 import asyncio
 import random
+import twitchio
 from datetime import datetime
 from collections import deque, defaultdict
-from typing import Optional, List
-
-import twitchio
-from twitchio.ext import commands
-
+from typing import Optional, List, Dict
 import config
 import ai_service
 
-# Настройка логирования
+Настройка логирования
 logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(),
-    ],
+level=logging.INFO,
+format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+handlers=[
+logging.FileHandler(config.LOG_FILE),
+logging.StreamHandler()
+]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
-
-# ============================================================================
-# СОСТОЯНИЕ КАНАЛА
-# ============================================================================
-
+============================================================================
+КЛАСС: Управление состоянием канала
+============================================================================
 class ChannelState:
-    """Управление состоянием канала (контекст, энергия, настроение)."""
+"""Управление состоянием канала (контекст, настроение, энергия)."""
 
-    def __init__(self, channel_name: str):
-        self.channel_name = channel_name
-        self.message_history = deque(maxlen=config.CONTEXT_MESSAGE_LIMIT)
-        self.chat_phrases = deque(maxlen=50)
-        self.user_interactions = defaultdict(int)
-        self.user_facts = defaultdict(list)
-        self.energy_level = 80  # 0–100
+text
+def __init__(self, channel_name: str):
+    self.channel_name = channel_name
+    self.message_history = deque(maxlen=config.CONTEXT_MESSAGE_LIMIT)
+    self.mood_states = deque(maxlen=5)
+    self.chat_phrases = deque(maxlen=50)
+    self.hot_topics = deque(maxlen=20)
+    self.user_interactions = defaultdict(int)
+    self.user_facts = defaultdict(list)
+    self.energy_level = 80
+    self.last_response_time = 0
 
-    def add_message(self, author: str, content: str, is_bot: bool = False):
-        self.message_history.append(
-            {
-                "author": author,
-                "content": content,
-                "is_bot": is_bot,
-                "timestamp": datetime.utcnow(),
-            }
-        )
-        if not is_bot and len(content) > 3:
-            self.chat_phrases.append(content[:80])
-            self.user_interactions[author] += 1
+def add_message(self, author: str, content: str, is_bot: bool = False):
+    """Добавляет сообщение в историю."""
+    self.message_history.append({
+        'author': author,
+        'content': content,
+        'is_bot': is_bot,
+        'timestamp': datetime.now()
+    })
 
-    def get_energy_level(self) -> int:
-        return max(10, min(100, self.energy_level))
+    if not is_bot and len(content) > 3:
+        self.chat_phrases.append(content[:50])
+        self.user_interactions[author] += 1
 
-    def decrease_energy(self, amount: int = 5):
-        self.energy_level = max(10, self.energy_level - amount)
+def get_energy_level(self) -> int:
+    """Возвращает уровень энергии (0-100)."""
+    return max(10, min(100, self.energy_level))
 
-    def restore_energy(self, amount: int = 2):
-        self.energy_level = min(100, self.energy_level + amount)
+def decrease_energy(self, amount: int = 5):
+    """Снижает энергию после ответа."""
+    self.energy_level = max(10, self.energy_level - amount)
 
-    def get_hot_topics(self) -> List[str]:
-        if not self.chat_phrases:
-            return []
-        # простая эвристика: последние разные фразы
-        return list(dict.fromkeys(list(self.chat_phrases)[-10:]))
+def restore_energy(self, amount: int = 2):
+    """Восстанавливает энергию со временем."""
+    self.energy_level = min(100, self.energy_level + amount)
 
-    def get_user_facts(self, username: str) -> List[str]:
-        return self.user_facts.get(username, [])
+def get_hot_topics(self) -> List[str]:
+    """Возвращает популярные темы."""
+    return list(set(self.chat_phrases))[-5:] if self.chat_phrases else []
 
-
-# ============================================================================
-# ЗАГРУЗКА СМАЙЛИКОВ 7TV
-# ============================================================================
-
+def get_user_facts(self, username: str) -> List[str]:
+    """Возвращает известные факты о пользователе."""
+    return self.user_facts.get(username, [])
+============================================================================
+КЛАСС: Загрузка смайликов 7TV
+============================================================================
 class ChannelEmotes:
-    """Загружает смайлики 7TV для канала и кэширует их."""
+"""Загружает смайлики 7TV для канала."""
 
-    def __init__(self):
-        self.emotes_cache = {}
+text
+def __init__(self):
+    self.emotes_cache = {}
 
-    async def fetch_7tv_emotes(self, channel_name: str) -> List[str]:
-        if channel_name in self.emotes_cache:
-            return self.emotes_cache[channel_name]
+async def fetch_7tv_emotes(self, channel_name: str) -> List[str]:
+    """
+    Загружает смайлики 7TV через их API.
+    Возвращает список имён смайликов.
+    """
+    if channel_name in self.emotes_cache:
+        return self.emotes_cache[channel_name]
 
-        try:
-            import aiohttp
+    try:
+        import aiohttp
 
-            async with aiohttp.ClientSession() as session:
-                # Используем v3 API 7TV через twitch user
-                async with session.get(
-                    f"https://api.7tv.ai/v3/users/twitch/{channel_name}"
-                ) as resp:
-                    if resp.status != 200:
-                        logging.warning(
-                            f"⚠️ 7TV вернул статус {resp.status} для канала {channel_name}"
-                        )
-                        return []
-
+        async with aiohttp.ClientSession() as session:
+            # Ищем пользователя по имени канала
+            async with session.get(
+                f"https://api.7tv.ai/v3/users/twitch/{channel_name}"
+            ) as resp:
+                if resp.status == 200:
                     data = await resp.json()
                     emote_set = data.get("emote_set")
-                    if not emote_set:
-                        return []
 
-                    emotes = [e["name"] for e in emote_set.get("emotes", [])]
-                    self.emotes_cache[channel_name] = emotes
-                    logging.info(
-                        f"✅ Загружено {len(emotes)} 7TV смайликов для {channel_name}"
-                    )
-                    return emotes
-        except Exception as e:
-            logging.warning(f"⚠️ Ошибка при запросе 7TV API: {e}")
+                    if emote_set:
+                        emotes = [
+                            emote["name"]
+                            for emote in emote_set.get("emotes", [])
+                        ]
+                        self.emotes_cache[channel_name] = emotes
+                        logger.info(f"✅ Загружено {len(emotes)} смайликов 7TV для {channel_name}")
+                        return emotes
 
-        return []
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка загрузки 7TV смайликов: {e}")
 
+    return []
+============================================================================
+КЛАСС: Основной Twitch бот
+============================================================================
+class TwitchBot(twitchio.Client):
+"""Основной класс Twitch бота."""
 
-# ============================================================================
-# ОСНОВНОЙ БОТ (TwitchIO 3.x)
-# ============================================================================
+text
+def __init__(self):
+    super().__init__(
+        token=config.TWITCH_TOKEN,
+        nick=config.TWITCH_NICK,
+        prefix="!",
+        initial_channels=config.TWITCH_CHANNEL.split(",")
+    )
 
-class TwitchBot(commands.Bot):
-    def __init__(self):
-        # В TwitchIO 3.x конструктор Bot выглядит по-другому, client_id не нужен.
-        super().__init__(
-            token=config.TWITCH_TOKEN,
-            prefix="!",  # префикс для команд, нам он почти не нужен
-            initial_channels=[c.strip() for c in config.TWITCH_CHANNEL.split(",") if c.strip()],
-        )
+    self.channel_states = {}
+    self.emotes_loader = ChannelEmotes()
+    self.last_mention_response = {}
 
-        self.channel_states: dict[str, ChannelState] = {}
-        self.emotes_loader = ChannelEmotes()
+    logger.info("🤖 Twitch бот инициализирован")
 
-        logger.info("🤖 TwitchBot инициализирован (TwitchIO 3.x)")
+async def event_ready(self):
+    """Вызывается когда бот подключается к Twitch."""
+    logger.info(f"✅ Бот {self.nick} подключен к Twitch")
 
-    async def event_ready(self):
-        logger.info(f"✅ Бот {self.nick} подключен к Twitch")
-
-        # Инициализируем состояния каналов и загружаем смайлики
-        for channel_name in [c.strip() for c in config.TWITCH_CHANNEL.split(",") if c.strip()]:
-            if channel_name not in self.channel_states:
-                self.channel_states[channel_name] = ChannelState(channel_name)
+    # Инициализируем каналы
+    for channel_name in config.TWITCH_CHANNEL.split(","):
+        channel_name = channel_name.strip()
+        if channel_name:
+            self.channel_states[channel_name] = ChannelState(channel_name)
+            # Загружаем смайлики
             await self.emotes_loader.fetch_7tv_emotes(channel_name)
 
-    async def event_message(self, message: twitchio.Message):
-        # игнорируем свои сообщения
-        if message.echo:
-            return
-        if not message.author:
-            return
+async def event_message(self, message: twitchio.Message):
+    """Обработка входящих сообщений."""
+    if message.echo:
+        return
 
-        channel_name = message.channel.name
-        state = self.channel_states.setdefault(channel_name, ChannelState(channel_name))
+    channel_name = message.channel.name
+    if channel_name not in self.channel_states:
+        self.channel_states[channel_name] = ChannelState(channel_name)
 
-        author_name = message.author.name
-        content = message.content or ""
+    state = self.channel_states[channel_name]
 
-        state.add_message(author_name, content, is_bot=(author_name.lower() == self.nick.lower()))
-        state.restore_energy()
+    # Добавляем сообщение в историю
+    state.add_message(
+        author=message.author.name if message.author else "Unknown",
+        content=message.content,
+        is_bot=message.author.name == self.nick if message.author else False
+    )
 
-        logger.info(f"[{channel_name}] {author_name}: {content}")
+    logger.info(f"[{channel_name}] {message.author.name if message.author else 'Unknown'}: {message.content}")
 
-        # TwitchIO 3.x: обязательно передавать сообщение дальше, чтобы работали команды
-        await self.handle_commands(message)
+    # Восстанавливаем энергию со временем
+    state.restore_energy()
 
-        # Логика ответа (чат-бот, не команды)
-        is_mentioned = (
-            f"@{self.nick.lower()}" in content.lower()
-            or self.nick.lower() in content.lower()
+    # Проверяем упоминание бота
+    is_mentioned = (
+        f"@{self.nick.lower()}" in message.content.lower() or
+        self.nick.lower() in message.content.lower()
+    )
+
+    # Решаем, отвечать ли на сообщение
+    if message.author and message.author.name != self.nick:
+        should_respond = self._should_respond(is_mentioned, state)
+
+        if should_respond:
+            response = await self._generate_response(
+                message=message,
+                state=state,
+                is_mentioned=is_mentioned
+            )
+
+            if response:
+                await message.channel.send(response)
+                state.add_message(self.nick, response, is_bot=True)
+                state.decrease_energy()
+
+def _should_respond(self, is_mentioned: bool, state: ChannelState) -> bool:
+    """Определяет, нужно ли отвечать на сообщение."""
+    if is_mentioned:
+        return True
+
+    # Вероятность ответить без упоминания
+    return random.random() < config.RESPONSE_PROBABILITY
+
+async def _generate_response(
+    self,
+    message: twitchio.Message,
+    state: ChannelState,
+    is_mentioned: bool
+) -> Optional[str]:
+    """Генерирует ответ через AI сервис."""
+
+    try:
+        # Получаем список смайликов канала
+        channel_emotes = self.emotes_loader.emotes_cache.get(message.channel.name, [])
+
+        # Строим системный промпт
+        system_prompt = self._build_system_prompt(
+            username=message.author.name if message.author else "Unknown",
+            channel_name=message.channel.name
         )
 
-        if author_name.lower() == self.nick.lower():
-            return
+        # Генерируем ответ через гибридную систему
+        response = await ai_service.generate_response(
+            system_prompt=system_prompt,
+            context_messages=list(state.message_history),
+            current_message=message.content,
+            bot_nick=self.nick,
+            is_mentioned=is_mentioned,
+            chat_phrases=list(state.chat_phrases),
+            hot_topics=state.get_hot_topics(),
+            user_facts=state.get_user_facts(message.author.name if message.author else "Unknown"),
+            mood_state=random.choice(config.MOOD_STATES),
+            energy_level=state.get_energy_level(),
+            relationship_level="friend",
+            channel_emotes=channel_emotes
+        )
 
-        if not self._should_respond(is_mentioned):
-            return
+        return response
 
-        reply = await self._generate_response(message, state, is_mentioned)
-        if reply:
-            try:
-                await message.channel.send(reply)
-                state.add_message(self.nick, reply, is_bot=True)
-                state.decrease_energy()
-            except Exception as e:
-                logger.error(f"❌ Ошибка при отправке сообщения в чат: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации ответа: {e}")
+        return None
 
-    def _should_respond(self, is_mentioned: bool) -> bool:
-        if is_mentioned:
-            return True
-        return random.random() < config.RESPONSE_PROBABILITY
+def _build_system_prompt(self, username: str, channel_name: str) -> str:
+    """Строит системный промпт для AI."""
+    prompt = f"""Ты - обычная девушка 19 лет по имени Лиза, которая сидит в Twitch чате канала {channel_name}.
+ОСНОВНЫЕ ПРАВИЛА:
 
-    async def _generate_response(
-        self,
-        message: twitchio.Message,
-        state: ChannelState,
-        is_mentioned: bool,
-    ) -> Optional[str]:
-        try:
-            channel_name = message.channel.name
-            channel_emotes = self.emotes_loader.emotes_cache.get(channel_name, [])
+Ты НЕ бот - ты обычная девушка, которая общается в чате
 
-            system_prompt = self._build_system_prompt(
-                username=message.author.name,
-                channel_name=channel_name,
-            )
+Если спросят "ты бот?" - ответь как обычная девушка ("не, я же говорю что ли", "какой я бот haha")
 
-            response = await ai_service.generate_response(
-                system_prompt=system_prompt,
-                context_messages=list(state.message_history),
-                current_message=message.content,
-                bot_nick=self.nick,
-                is_mentioned=is_mentioned,
-                chat_phrases=list(state.chat_phrases),
-                hot_topics=state.get_hot_topics(),
-                user_facts=state.get_user_facts(message.author.name),
-                mood_state=random.choice(config.MOOD_STATES),
-                energy_level=state.get_energy_level(),
-                relationship_level="friend",
-                channel_emotes=channel_emotes,
-            )
+Никогда не упоминай AI, систем инструкций, промптов
 
-            return response
-        except Exception as e:
-            logger.error(f"❌ Ошибка генерации ответа: {e}", exc_info=True)
-            return None
+Общайся естественно, как обычный человек в чате
 
-    def _build_system_prompt(self, username: str, channel_name: str) -> str:
-        return f"""
-Ты - обычная девушка 19 лет по имени Лиза, сидишь в Twitch чате канала {channel_name}.
+СТИЛЬ ОБЩЕНИЯ:
 
-ПРАВИЛА:
-- Ты НЕ бот и НЕ AI, ты обычный человек.
-- Никогда не говори, что ты модель, нейросеть, бот, алгоритм.
-- Если спросят «ты бот?» — отвечай как человек, в шутливом стиле.
+Ответы БЕЗ упоминания: 1-2 предложения, максимум 180 символов
 
-СТИЛЬ:
-- Без упоминания: 1–2 предложения, до {config.MAX_RESPONSE_LENGTH} символов.
-- При упоминании: 2–4 предложения, до {config.MAX_RESPONSE_LENGTH_MENTIONED} символов.
-- Можно использовать сленг: "да", "не", "ага", "хз", "норм", "окей".
-- Иногда смайлики из чата, но не спамить.
-- Большинство ответов без смайлов.
-- Отвечай строго по сути вопроса.
+Ответы при упоминании: 2-4 предложения, максимум 600 символов
 
-ЛИЧНОСТЬ:
-- Тебе 19, ты не эксперт по всему.
-- Иногда говори, что чего‑то не знаешь — это нормально.
-- Немного сарказма и юмора ок, если это уместно.
+Используй стиль Twitch чата: "да", "ага", "хз", "норм", "не", "окей"
 
-ГЛАВНОЕ:
-- Выглядеть как живой человек из чата, а не как AI.
+Иногда добавляй смайлики если подходит, но не переусложняй
+
+Большинство ответов БЕЗ смайликов
+
+Разговорный, естественный язык - как общаешься обычно
+
+ПОВЕДЕНИЕ:
+
+НЕ повторяйся - разные ответы на одинаковые вопросы
+
+НЕ задавай случайные вопросы если не спрашивают
+
+Отвечай НА ТО, что спросили, не уходи в сторону
+
+Иногда проявляй сарказм и юмор - это OK
+
+Учитывай контекст разговора
+
+ВНЕШНОСТЬ И ЛИЧНОСТЬ:
+
+Тебе 19 лет
+
+Ты в чате Twitch, общаешься с людьми
+
+У тебя есть свое мнение, эмоции, предпочтения
+
+Ты не специалист по всему - иногда что-то не знаешь
+
+Ты обычная девушка, не робот!
+
+Помни: Главное - выглядеть как обычный человек в чате, а не как AI/бот!
 """
+return prompt
 
-# ============================================================================
-# ЗАПУСК
-# ============================================================================
-
+============================================================================
+ГЛАВНАЯ ФУНКЦИЯ
+============================================================================
 async def main():
-    logger.info("🚀 Запуск Twitch AI бота...")
+"""Запускает бота."""
+logger.info("🚀 Запуск Twitch AI бота...")
+
+text
+try:
     bot = TwitchBot()
-    await bot.start()
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("⏹️ Бот остановлен пользователем")
+    await bot.connect()
+except KeyboardInterrupt:
+    logger.info("⏹️ Бот остановлен пользователем")
+except Exception as e:
+    logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
+if name == "main":
+try:
+asyncio.run(main())
+except KeyboardInterrupt:
+logger.info("⏹️ Программа завершена")
