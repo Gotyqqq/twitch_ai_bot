@@ -1,4 +1,4 @@
-# bot.py - ОСНОВНОЙ TWITCH БОТ С ГИБРИДНОЙ СИСТЕМОЙ AI
+# bot.py - ОСНОВНОЙ TWITCH БОТ С ГИБРИДНОЙ СИСТЕМОЙ AI (ИСПРАВЛЕНА ОШИБКА INDENT)
 
 import twitchio
 import asyncio
@@ -16,13 +16,14 @@ logging.basicConfig(
 )
 
 # ============================================================================
-# КЛАСС ДЛЯ ЗАГРУЗКИ СМАЙЛИКОВ КАНАЛА
+# КЛАСС ДЛЯ ЗАГРУЗКИ СМАЙЛИКОВ КАНАЛА ЧЕРЕЗ 7TV
 # ============================================================================
 
 
 class ChannelEmotes:
     """
     Загружает и кэширует смайлики 7TV для каждого канала.
+    Работает без Twitch API - используем 7TV API напрямую.
     """
 
     def __init__(self):
@@ -49,20 +50,30 @@ class ChannelEmotes:
             return config.DEFAULT_EMOTES
 
     async def _fetch_7tv_emotes(self, channel_name: str) -> list:
-        """Загружает смайлики 7TV через API."""
+        """Загружает смайлики 7TV напрямую через их API (без Twitch API)."""
         import aiohttp
 
-            # 2. Получаем смайлики 7TV для канала
-            async with session.get(f"https://api.7tv.app/v2/users/{channel_name}/emotes") as resp:
-                if resp.status != 200:
-                    return config.DEFAULT_EMOTES
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 7TV API: ищем пользователя по имени канала
+                async with session.get(
+                    f"https://api.7tv.app/v2/users/{channel_name}"
+                ) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ 7TV не нашел канал {channel_name}, используем дефолты")
+                        return config.DEFAULT_EMOTES
 
-                data = await resp.json()
-                emotes = [emote["name"] for emote in data.get("emotes", [])]
-                return emotes if emotes else config.DEFAULT_EMOTES
+                    data = await resp.json()
+                    emotes = [emote["name"] for emote in data.get("emotes", [])]
+
+                    if not emotes:
+                        logging.warning(f"⚠️ У канала {channel_name} нет 7TV смайликов")
+                        return config.DEFAULT_EMOTES
+
+                    return emotes
 
         except Exception as e:
-            logging.error(f"❌ Ошибка загрузки 7TV смайликов: {e}")
+            logging.error(f"❌ Ошибка загрузки 7TV смайликов для {channel_name}: {e}")
             return config.DEFAULT_EMOTES
 
 
@@ -154,7 +165,7 @@ class TwitchBot(twitchio.Client):
             if channel:
                 await self.join_channels(channel)
 
-                # Загружаем смайлики для канала
+                # Загружаем смайлики для канала (через 7TV API)
                 emotes = await self.emote_loader.get_channel_emotes(channel)
 
                 self.channel_states[channel] = ChannelState(channel, emotes=emotes)
