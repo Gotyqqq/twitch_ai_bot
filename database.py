@@ -1,17 +1,19 @@
 # database.py - Хранение данных и статистики
+
 import sqlite3
 import datetime
 import re
 import json
+import logging  # ← ЭТО БЫЛО ПРОПУЩЕНО!
 from collections import Counter
 from typing import List, Dict, Optional
+
 import config
 
 logger = logging.getLogger(__name__)
 
 def get_db_name(channel_name: str) -> str:
     """Генерирует имя файла БД для канала"""
-    # Заменяем недопустимые символы
     safe_name = re.sub(r'[^\w\-]', '_', channel_name.lower())
     return f"data/{safe_name}.db"
 
