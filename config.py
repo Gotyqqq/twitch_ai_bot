@@ -1,4 +1,5 @@
-# config.py - Конфигурация максимально человечного бота
+# config.py - Конфигурация максимально человечного бота (УЛУЧШЕННАЯ ВЕРСИЯ)
+
 import os
 from dotenv import load_dotenv
 from datetime import time
@@ -12,42 +13,68 @@ TWITCH_TOKEN = os.getenv("TWITCH_TOKEN")
 TWITCH_NICK = os.getenv("TWITCH_NICK", "bot_username").lower()
 TWITCH_CHANNELS = [ch.strip() for ch in os.getenv("TWITCH_CHANNEL", "").split(',') if ch.strip()]
 
-# API ключи (Mistral - умная, Gemma - быстрая)
+# API ключи
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ====================================================================
 # СИСТЕМА ДВУХ ИИ
 # ====================================================================
-# Модель-анализатор (Mistral) - анализирует контекст, эмоции, отношения
-ANALYZER_MODEL = "mistral-medium"  # Для глубокого анализа
-ANALYZER_CONTEXT_SIZE = 15         # Сколько сообщений анализировать
-ANALYZER_UPDATE_INTERVAL = 30      # Как часто обновлять анализ (сек)
+ANALYZER_MODEL = "mistral-medium"
+ANALYZER_CONTEXT_SIZE = 15
+ANALYZER_UPDATE_INTERVAL = 30
 
-# Модель-ответчик (Gemma) - генерирует ответы на основе анализа
 RESPONDER_MODEL = "gemma-3-27b-it"
-RESPONDER_TEMPERATURE = 0.92       # Высокая температура для разнообразия
+RESPONDER_TEMPERATURE = 0.92
 
 # ====================================================================
-# ЧЕЛОВЕЧЕСКИЕ ПАРАМЕТРЫ
+# ЧЕЛОВЕЧЕСКИЕ ПАРАМЕТРЫ (УЛУЧШЕНО)
 # ====================================================================
-# ИМИТАЦИЯ ЧЕЛОВЕКА
-HUMAN_TYPING_SPEED_WPM = 180       # Скорость печати (слов/минуту)
-THINKING_TIME_MIN = 1.5            # Минимальное время "на подумать" (сек)
-THINKING_TIME_MAX = 4.5            # Максимальное время "на подумать"
-RESPONSE_VARIABILITY = 0.3         # Как сильно менять стиль ответов (0-1)
+HUMAN_TYPING_SPEED_WPM = 180
+THINKING_TIME_MIN = 1.5
+THINKING_TIME_MAX = 4.5
+RESPONSE_VARIABILITY = 0.3
 
 # ОПЕЧАТКИ И ЕСТЕСТВЕННОСТЬ
-TYPO_PROBABILITY = 0.15            # Вероятность опечатки
-TYPO_FIX_PROBABILITY = 0.25        # Вероятность исправить опечатку
-STUTTER_PROBABILITY = 0.05         # Вероятность запинки (типа...)
+TYPO_PROBABILITY = 0.18  # Увеличено для реализма
+TYPO_FIX_PROBABILITY = 0.20  # Уменьшено - не всегда исправляем
+STUTTER_PROBABILITY = 0.08  # Увеличено
+CAPS_LOCK_PROBABILITY = 0.05  # Новое: случайный капслок при эмоциях
+DOUBLE_MESSAGE_PROBABILITY = 0.12  # Новое: дополнение своего сообщения
+EMOJI_ONLY_RESPONSE = 0.08  # Новое: ответ только смайликом
+SHORT_REACTION_PROBABILITY = 0.25  # Новое: короткие реакции (ага, лол, да)
 
-# РАСПИСАНИЕ АКТИВНОСТИ (когда бот "бодрствует")
+# СЛЕНГ И СОКРАЩЕНИЯ (НОВОЕ)
+USE_SLANG = True
+SLANG_PROBABILITY = 0.35
+INTERNET_SLANG = {
+    'спасибо': ['спс', 'сенкс', 'спасибки'],
+    'пожалуйста': ['пж', 'пжлст', 'не за что'],
+    'хорошо': ['ок', 'окей', 'норм', 'найс'],
+    'понятно': ['ясн', 'пон', 'понял'],
+    'не знаю': ['хз', 'незн', 'не в курсе'],
+    'сейчас': ['щас', 'ща', 'счас'],
+    'кстати': ['кст', 'кста'],
+    'наверное': ['наверн', 'мб', 'может'],
+    'конечно': ['кнч', 'разумеется'],
+}
+
+# ЗАБЫВЧИВОСТЬ (НОВОЕ)
+MEMORY_FADE_PROBABILITY = 0.15  # Иногда "забывает" контекст
+AFK_PROBABILITY = 0.03  # Вероятность уйти в АФК
+AFK_DURATION_MIN = 120  # 2 минуты
+AFK_DURATION_MAX = 600  # 10 минут
+
+# НАСТРОЕНИЕ (НОВОЕ)
+RANDOM_MOOD_SHIFT = 0.10  # Случайные смены настроения
+MOOD_SHIFT_MAGNITUDE = 15  # Насколько сильно меняется
+
+# РАСПИСАНИЕ АКТИВНОСТИ
 ACTIVE_HOURS = {
-    'morning': (9, 12),     # Утро
-    'day': (14, 18),        # День
-    'evening': (20, 23),    # Вечер
-    'night': (0, 3),        # Ночь (для ночных стримов)
+    'morning': (9, 12),
+    'day': (14, 18),
+    'evening': (20, 23),
+    'night': (0, 3),
 }
 
 # ====================================================================
@@ -57,65 +84,66 @@ INITIAL_MOOD = 70
 MOOD_MIN = 20
 MOOD_MAX = 100
 
-# Эмоциональные состояния и их проявления
 EMOTION_STATES = {
-    'excited': {'energy': 90, 'emotes': ['PogChamp', 'Pog', 'KEKW', 'LUL'], 'typo_chance': 0.2},
-    'happy': {'energy': 75, 'emotes': ['FeelsGoodMan', 'Kappa', 'Okayge'], 'typo_chance': 0.1},
-    'neutral': {'energy': 50, 'emotes': ['Kappa', '4Head'], 'typo_chance': 0.05},
-    'tired': {'energy': 30, 'emotes': ['Sadge', 'FeelsBadMan'], 'typo_chance': 0.02},
-    'grumpy': {'energy': 40, 'emotes': ['WeirdChamp', 'MonkaS'], 'typo_chance': 0.01},
+    'excited': {'energy': 90, 'emotes': ['PogChamp', 'Pog', 'KEKW', 'LUL'], 'typo_chance': 0.25, 'caps_chance': 0.15},
+    'happy': {'energy': 75, 'emotes': ['FeelsGoodMan', 'Kappa', 'Okayge'], 'typo_chance': 0.12, 'caps_chance': 0.05},
+    'neutral': {'energy': 50, 'emotes': ['Kappa', '4Head'], 'typo_chance': 0.08, 'caps_chance': 0.02},
+    'tired': {'energy': 30, 'emotes': ['Sadge', 'FeelsBadMan'], 'typo_chance': 0.05, 'caps_chance': 0.01},
+    'grumpy': {'energy': 40, 'emotes': ['WeirdChamp', 'MonkaS'], 'typo_chance': 0.03, 'caps_chance': 0.08},
 }
 
 # ====================================================================
 # СМАЙЛИКИ И 7TV СИСТЕМА
 # ====================================================================
-# Загрузка смайликов
 FETCH_7TV_EMOTES = True
 FETCH_BTTV_EMOTES = True
 FETCH_FFZ_EMOTES = True
 
-# Система "помойки" для смайликов
-EMOTE_COOLDOWN_TIME = 300          # 5 минут в "помойке"
-EMOTE_REUSE_PENALTY = 0.7         # Штраф за повторное использование
-EMOTE_DIVERSITY_BONUS = 1.3       # Бонус за разнообразие
-MAX_CONSECUTIVE_SAME_EMOTE = 3    # Не использовать один смайлик более N раз
+EMOTE_COOLDOWN_TIME = 300
+EMOTE_REUSE_PENALTY = 0.7
+EMOTE_DIVERSITY_BONUS = 1.3
+MAX_CONSECUTIVE_SAME_EMOTE = 3
 
-# Приоритеты смайликов
 EMOTE_PRIORITIES = {
-    '7tv': 1.5,      # Самые приоритетные
+    '7tv': 1.5,
     'bttv': 1.3,
     'ffz': 1.2,
-    'twitch': 1.0,   # Базовые твич смайлы
+    'twitch': 1.0,
 }
 
 # ====================================================================
-# СИСТЕМА ОТВЕТОВ
+# СИСТЕМА ОТВЕТОВ (УЛУЧШЕНО)
 # ====================================================================
-# Частота ответов
-RESPONSE_PROBABILITY_BASE = 0.18
-MIN_MESSAGES_BEFORE_RESPONSE = 5
-RESPONSE_COOLDOWN_MIN = 90
-RESPONSE_COOLDOWN_MAX = 240
+RESPONSE_PROBABILITY_BASE = 0.16  # Немного уменьшено для реализма
+MIN_MESSAGES_BEFORE_RESPONSE = 4  # Уменьшено
+RESPONSE_COOLDOWN_MIN = 75  # Уменьшено
+RESPONSE_COOLDOWN_MAX = 280  # Увеличено разброс
 
 # Длина ответов
-SHORT_RESPONSE_MAX = 120          # Короткий ответ
-MEDIUM_RESPONSE_MAX = 250         # Средний ответ
-LONG_RESPONSE_MAX = 400           # Длинный ответ (при упоминании)
+SHORT_RESPONSE_MAX = 120
+MEDIUM_RESPONSE_MAX = 250
+LONG_RESPONSE_MAX = 400
+
+# КОРОТКИЕ РЕАКЦИИ (НОВОЕ)
+SHORT_REACTIONS = [
+    'ага', 'да', 'не', 'лол', 'хах', 'хз', 'ок', 'норм', 'найс', 'кек',
+    'вау', 'ого', 'блин', 'ну да', 'точно', 'факт', 'мб', 'тру', 'ваще',
+    'жиза', 'база', 'кринж', 'имба', 'топ', 'эх', 'ясн', 'пон', 'угу'
+]
 
 # ====================================================================
 # КОНТЕКСТ И ПАМЯТЬ
 # ====================================================================
-CONTEXT_WINDOW_SIZE = 20           # Сообщений для контекста
-TOPIC_MEMORY_SIZE = 8              # Тем в памяти
-USER_FACT_MEMORY = 10              # Фактов о пользователе
+CONTEXT_WINDOW_SIZE = 20
+TOPIC_MEMORY_SIZE = 8
+USER_FACT_MEMORY = 10
 
-# Веса для разных типов сообщений в контексте
 CONTEXT_WEIGHTS = {
-    'mentioned': 3.0,      # Сообщения с упоминанием бота
-    'question': 2.0,       # Вопросы
-    'emotional': 1.5,      # Эмоциональные сообщения
-    'normal': 1.0,         # Обычные сообщения
-    'bot_own': 0.5,        # Собственные сообщения бота
+    'mentioned': 3.0,
+    'question': 2.0,
+    'emotional': 1.5,
+    'normal': 1.0,
+    'bot_own': 0.5,
 }
 
 # ====================================================================
@@ -133,10 +161,10 @@ RELATIONSHIP_LEVELS = {
 # ====================================================================
 # АНТИ-ТИШИНА И АКТИВНОСТЬ
 # ====================================================================
-SILENCE_THRESHOLD = 300            # 5 минут тишины
-ACTIVITY_CHECK_INTERVAL = 60       # Проверять активность каждую минуту
-ENERGY_DECAY_PER_MESSAGE = 0.5     # Усталость за сообщение
-ENERGY_RESTORE_PER_MINUTE = 1.2    # Восстановление энергии в минуту
+SILENCE_THRESHOLD = 300
+ACTIVITY_CHECK_INTERVAL = 60
+ENERGY_DECAY_PER_MESSAGE = 0.5
+ENERGY_RESTORE_PER_MINUTE = 1.2
 
 # ====================================================================
 # БЕЗОПАСНОСТЬ И ФИЛЬТРЫ
